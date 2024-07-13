@@ -22,7 +22,7 @@
 #include <unistd.h>
 #endif
 
-#include "ggml/ggml.h"
+#include "ggml/include/ggml.h"
 #include "stable-diffusion.h"
 
 #define STB_IMAGE_RESIZE_IMPLEMENTATION

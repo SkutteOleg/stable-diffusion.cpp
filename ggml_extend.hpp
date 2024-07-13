@@ -20,9 +20,9 @@
 #include <unordered_map>
 #include <vector>
 
-#include "ggml/ggml-alloc.h"
-#include "ggml/ggml-backend.h"
-#include "ggml/ggml.h"
+#include "ggml/include/ggml-alloc.h"
+#include "ggml/include/ggml-backend.h"
+#include "ggml/include/ggml.h"
 
 #ifdef SD_USE_CUBLAS
 #include "ggml-cuda.h"

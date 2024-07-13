@@ -11,9 +11,9 @@
 #include "util.h"
 #include "vocab.hpp"
 
-#include "ggml/ggml-alloc.h"
-#include "ggml/ggml-backend.h"
-#include "ggml/ggml.h"
+#include "ggml/include/ggml-alloc.h"
+#include "ggml/include/ggml-backend.h"
+#include "ggml/include/ggml.h"
 
 #include "stable-diffusion.h"
 
