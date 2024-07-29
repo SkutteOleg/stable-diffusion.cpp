@@ -1,4 +1,4 @@
 [submodule "ggml"]
     path = ggml
-	url = https://github.com/Cloudwalk9/ggml.git
-	branch = vulkan-test
+	url = https://github.com/SkutteOleg/ggml.git
+	branch = vulkan-stable-diffusion-ops
