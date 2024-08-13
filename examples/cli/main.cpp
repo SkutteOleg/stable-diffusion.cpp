@@ -716,26 +716,28 @@ int main(int argc, const char* argv[]) {
         }
     }
 
-    sd_ctx_t* sd_ctx = new_sd_ctx(params.model_path.c_str(),
-                                  params.vae_path.c_str(),
-                                  params.taesd_path.c_str(),
-                                  params.controlnet_path.c_str(),
-                                  params.lora_model_dir.c_str(),
-                                  params.embeddings_path.c_str(),
-                                  params.stacked_id_embeddings_path.c_str(),
-                                  vae_decode_only,
-                                  params.vae_tiling,
-                                  true,
-                                  params.n_threads,
-                                  params.wtype,
-                                  params.rng_type,
-                                  params.schedule,
-                                  params.clip_on_cpu,
-                                  params.control_net_cpu,
-                                  params.vae_on_cpu);
+    sd_ctx_t* sd_ctx;
+    SDError err = new_sd_ctx(&sd_ctx,
+                             params.model_path.c_str(),
+                             params.vae_path.c_str(),
+                             params.taesd_path.c_str(),
+                             params.controlnet_path.c_str(),
+                             params.lora_model_dir.c_str(),
+                             params.embeddings_path.c_str(),
+                             params.stacked_id_embeddings_path.c_str(),
+                             vae_decode_only,
+                             params.vae_tiling,
+                             true,
+                             params.n_threads,
+                             params.wtype,
+                             params.rng_type,
+                             params.schedule,
+                             params.clip_on_cpu,
+                             params.control_net_cpu,
+                             params.vae_on_cpu);
 
-    if (sd_ctx == NULL) {
-        printf("new_sd_ctx_t failed\n");
+    if (err != SD_SUCCESS) {
+        printf("new_sd_ctx failed with error code %d\n", err);
         return 1;
     }
 
@@ -764,23 +766,32 @@ int main(int argc, const char* argv[]) {
     }
 
     sd_image_t* results;
+    int result_count;
     if (params.mode == TXT2IMG) {
-        results = txt2img(sd_ctx,
-                          params.prompt.c_str(),
-                          params.negative_prompt.c_str(),
-                          params.clip_skip,
-                          params.cfg_scale,
-                          params.width,
-                          params.height,
-                          params.sample_method,
-                          params.sample_steps,
-                          params.seed,
-                          params.batch_count,
-                          control_image,
-                          params.control_strength,
-                          params.style_ratio,
-                          params.normalize_input,
-                          params.input_id_images_path.c_str());
+        err = txt2img(sd_ctx,
+                      &results,
+                      &result_count,
+                      params.prompt.c_str(),
+                      params.negative_prompt.c_str(),
+                      params.clip_skip,
+                      params.cfg_scale,
+                      params.width,
+                      params.height,
+                      params.sample_method,
+                      params.sample_steps,
+                      params.seed,
+                      params.batch_count,
+                      control_image,
+                      params.control_strength,
+                      params.style_ratio,
+                      params.normalize_input,
+                      params.input_id_images_path.c_str());
+        
+        if (err != SD_SUCCESS) {
+            printf("txt2img failed with error code %d\n", err);
+            free_sd_ctx(sd_ctx);
+            return 1;
+        }
     } else {
         sd_image_t input_image = {(uint32_t)params.width,
                                   (uint32_t)params.height,
@@ -807,22 +818,7 @@ int main(int argc, const char* argv[]) {
                 free_sd_ctx(sd_ctx);
                 return 1;
             }
-            size_t last            = params.output_path.find_last_of(".");
-            std::string dummy_name = last != std::string::npos ? params.output_path.substr(0, last) : params.output_path;
-            for (int i = 0; i < params.video_frames; i++) {
-                if (results[i].data == NULL) {
-                    continue;
-                }
-                std::string final_image_path = i > 0 ? dummy_name + "_" + std::to_string(i + 1) + ".png" : dummy_name + ".png";
-                stbi_write_png(final_image_path.c_str(), results[i].width, results[i].height, results[i].channel,
-                               results[i].data, 0, get_image_params(params, params.seed + i).c_str());
-                printf("save result image to '%s'\n", final_image_path.c_str());
-                free(results[i].data);
-                results[i].data = NULL;
-            }
-            free(results);
-            free_sd_ctx(sd_ctx);
-            return 0;
+            result_count = params.video_frames;
         } else {
             results = img2img(sd_ctx,
                               input_image,
@@ -842,6 +838,7 @@ int main(int argc, const char* argv[]) {
                               params.style_ratio,
                               params.normalize_input,
                               params.input_id_images_path.c_str());
+            result_count = params.batch_count;
         }
     }
 
