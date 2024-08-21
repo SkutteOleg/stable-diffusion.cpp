@@ -105,6 +105,14 @@ enum sd_log_level_t {
     SD_LOG_ERROR
 };
 
+enum SDError {
+    SD_SUCCESS = 0,
+    SD_ERROR_INVALID_CONTEXT,
+    SD_ERROR_MEMORY_ALLOCATION,
+    SD_ERROR_PROCESSING,
+    SD_ERROR_INVALID_PARAMETER
+};
+
 typedef void (*sd_log_cb_t)(enum sd_log_level_t level, const char* text, void* data);
 typedef void (*sd_progress_cb_t)(int step, int steps, float time, void* data);
 
@@ -122,47 +130,50 @@ typedef struct {
 
 typedef struct sd_ctx_t sd_ctx_t;
 
-SD_API sd_ctx_t* new_sd_ctx(const char* model_path,
-                            const char* clip_l_path,
-                            const char* clip_g_path,
-                            const char* t5xxl_path,
-                            const char* diffusion_model_path,
-                            const char* vae_path,
-                            const char* taesd_path,
-                            const char* control_net_path_c_str,
-                            const char* lora_model_dir,
-                            const char* embed_dir_c_str,
-                            const char* stacked_id_embed_dir_c_str,
-                            bool vae_decode_only,
-                            bool vae_tiling,
-                            bool free_params_immediately,
-                            int n_threads,
-                            enum sd_type_t wtype,
-                            enum rng_type_t rng_type,
-                            enum schedule_t s,
-                            bool keep_clip_on_cpu,
-                            bool keep_control_net_cpu,
-                            bool keep_vae_on_cpu);
+SD_API SDError new_sd_ctx(sd_ctx_t** sd_ctx,
+                          const char* model_path,
+                          const char* clip_l_path,
+                          const char* clip_g_path,
+                          const char* t5xxl_path,
+                          const char* diffusion_model_path,
+                          const char* vae_path,
+                          const char* taesd_path,
+                          const char* control_net_path_c_str,
+                          const char* lora_model_dir,
+                          const char* embed_dir_c_str,
+                          const char* stacked_id_embed_dir_c_str,
+                          bool vae_decode_only,
+                          bool vae_tiling,
+                          bool free_params_immediately,
+                          int n_threads,
+                          enum sd_type_t wtype,
+                          enum rng_type_t rng_type,
+                          enum schedule_t s,
+                          bool keep_clip_on_cpu,
+                          bool keep_control_net_cpu,
+                          bool keep_vae_on_cpu);
 
 SD_API void free_sd_ctx(sd_ctx_t* sd_ctx);
 
-SD_API sd_image_t* txt2img(sd_ctx_t* sd_ctx,
-                           const char* prompt,
-                           const char* negative_prompt,
-                           int clip_skip,
-                           float cfg_scale,
-                           float guidance,
-                           int width,
-                           int height,
-                           enum sample_method_t sample_method,
-                           int sample_steps,
-                           int64_t seed,
-                           int batch_count,
-                           const sd_image_t* control_cond,
-                           float control_strength,
-                           float style_strength,
-                           bool normalize_input,
-                           const char* input_id_images_path);
+SD_API SDError txt2img(sd_ctx_t* sd_ctx,
+                       sd_image_t** result_images,
+                       int* result_count,
+                       const char* prompt,
+                       const char* negative_prompt,
+                       int clip_skip,
+                       float cfg_scale,
+                       float guidance,
+                       int width,
+                       int height,
+                       enum sample_method_t sample_method,
+                       int sample_steps,
+                       int64_t seed,
+                       int batch_count,
+                       const sd_image_t* control_cond,
+                       float control_strength,
+                       float style_strength,
+                       bool normalize_input,
+                       const char* input_id_images_path);
 
 SD_API sd_image_t* img2img(sd_ctx_t* sd_ctx,
                            sd_image_t init_image,

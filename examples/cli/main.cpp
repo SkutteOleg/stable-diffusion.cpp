@@ -771,30 +771,32 @@ int main(int argc, const char* argv[]) {
         }
     }
 
-    sd_ctx_t* sd_ctx = new_sd_ctx(params.model_path.c_str(),
-                                  params.clip_l_path.c_str(),
-                                  params.clip_g_path.c_str(),
-                                  params.t5xxl_path.c_str(),
-                                  params.diffusion_model_path.c_str(),
-                                  params.vae_path.c_str(),
-                                  params.taesd_path.c_str(),
-                                  params.controlnet_path.c_str(),
-                                  params.lora_model_dir.c_str(),
-                                  params.embeddings_path.c_str(),
-                                  params.stacked_id_embeddings_path.c_str(),
-                                  vae_decode_only,
-                                  params.vae_tiling,
-                                  true,
-                                  params.n_threads,
-                                  params.wtype,
-                                  params.rng_type,
-                                  params.schedule,
-                                  params.clip_on_cpu,
-                                  params.control_net_cpu,
-                                  params.vae_on_cpu);
+    sd_ctx_t* sd_ctx;
+    SDError err = new_sd_ctx(&sd_ctx,
+                             params.model_path.c_str(),
+                             params.clip_l_path.c_str(),
+                             params.clip_g_path.c_str(),
+                             params.t5xxl_path.c_str(),
+                             params.diffusion_model_path.c_str(),
+                             params.vae_path.c_str(),
+                             params.taesd_path.c_str(),
+                             params.controlnet_path.c_str(),
+                             params.lora_model_dir.c_str(),
+                             params.embeddings_path.c_str(),
+                             params.stacked_id_embeddings_path.c_str(),
+                             vae_decode_only,
+                             params.vae_tiling,
+                             true,
+                             params.n_threads,
+                             params.wtype,
+                             params.rng_type,
+                             params.schedule,
+                             params.clip_on_cpu,
+                             params.control_net_cpu,
+                             params.vae_on_cpu);
 
-    if (sd_ctx == NULL) {
-        printf("new_sd_ctx_t failed\n");
+    if (err != SD_SUCCESS) {
+        printf("new_sd_ctx failed with error code %d\n", err);
         return 1;
     }
 
@@ -823,24 +825,33 @@ int main(int argc, const char* argv[]) {
     }
 
     sd_image_t* results;
+    int result_count;
     if (params.mode == TXT2IMG) {
-        results = txt2img(sd_ctx,
-                          params.prompt.c_str(),
-                          params.negative_prompt.c_str(),
-                          params.clip_skip,
-                          params.cfg_scale,
-                          params.guidance,
-                          params.width,
-                          params.height,
-                          params.sample_method,
-                          params.sample_steps,
-                          params.seed,
-                          params.batch_count,
-                          control_image,
-                          params.control_strength,
-                          params.style_ratio,
-                          params.normalize_input,
-                          params.input_id_images_path.c_str());
+        err = txt2img(sd_ctx,
+                      &results,
+                      &result_count,
+                      params.prompt.c_str(),
+                      params.negative_prompt.c_str(),
+                      params.clip_skip,
+                      params.cfg_scale,
+                      params.guidance,
+                      params.width,
+                      params.height,
+                      params.sample_method,
+                      params.sample_steps,
+                      params.seed,
+                      params.batch_count,
+                      control_image,
+                      params.control_strength,
+                      params.style_ratio,
+                      params.normalize_input,
+                      params.input_id_images_path.c_str());
+
+        if (err != SD_SUCCESS) {
+            printf("txt2img failed with error code %d\n", err);
+            free_sd_ctx(sd_ctx);
+            return 1;
+        }
     } else {
         sd_image_t input_image = {(uint32_t)params.width,
                                   (uint32_t)params.height,
