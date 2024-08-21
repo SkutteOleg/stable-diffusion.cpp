@@ -15,6 +15,7 @@
 #include "pmid.hpp"
 #include "tae.hpp"
 #include "vae.hpp"
+#include <setjmp.h>
 
 #define STB_IMAGE_IMPLEMENTATION
 #define STB_IMAGE_STATIC
@@ -1019,7 +1020,7 @@ SDError new_sd_ctx(sd_ctx_t** sd_ctx,
                    const char* model_path_c_str,
                    const char* clip_l_path_c_str,
                    const char* clip_g_path_c_str,
-                     const char* t5xxl_path_c_str,
+                   const char* t5xxl_path_c_str,
                    const char* diffusion_model_path_c_str,
                    const char* vae_path_c_str,
                    const char* taesd_path_c_str,
@@ -1037,33 +1038,37 @@ SDError new_sd_ctx(sd_ctx_t** sd_ctx,
                    bool keep_clip_on_cpu,
                    bool keep_control_net_cpu,
                    bool keep_vae_on_cpu) {
-    try {
-        *sd_ctx = (sd_ctx_t*)malloc(sizeof(sd_ctx_t));
-        if (*sd_ctx == NULL) {
-            return SD_ERROR_MEMORY_ALLOCATION;
-        }
+    ggml_error_jmp_set = 1;
+    if (setjmp(ggml_error_jmp_buf) == 0) {
+        try {
+            *sd_ctx = (sd_ctx_t*)malloc(sizeof(sd_ctx_t));
+            if (*sd_ctx == NULL) {
+                ggml_error_jmp_set = 0;
+                return SD_ERROR_MEMORY_ALLOCATION;
+            }
 
-        std::string model_path(model_path_c_str);
-        std::string clip_l_path(clip_l_path_c_str);
-        std::string clip_g_path(clip_g_path_c_str);
-        std::string t5xxl_path(t5xxl_path_c_str);
-        std::string diffusion_model_path(diffusion_model_path_c_str);
-        std::string vae_path(vae_path_c_str);
-        std::string taesd_path(taesd_path_c_str);
-        std::string control_net_path(control_net_path_c_str);
-        std::string embd_path(embed_dir_c_str);
-        std::string id_embd_path(id_embed_dir_c_str);
-        std::string lora_model_dir(lora_model_dir_c_str);
+            std::string model_path(model_path_c_str);
+            std::string clip_l_path(clip_l_path_c_str);
+            std::string clip_g_path(clip_g_path_c_str);
+            std::string t5xxl_path(t5xxl_path_c_str);
+            std::string diffusion_model_path(diffusion_model_path_c_str);
+            std::string vae_path(vae_path_c_str);
+            std::string taesd_path(taesd_path_c_str);
+            std::string control_net_path(control_net_path_c_str);
+            std::string embd_path(embed_dir_c_str);
+            std::string id_embd_path(id_embed_dir_c_str);
+            std::string lora_model_dir(lora_model_dir_c_str);
 
-        (*sd_ctx)->sd = new StableDiffusionGGML(n_threads,
-                                                vae_decode_only,
-                                                free_params_immediately,
-                                                lora_model_dir,
-                                                rng_type);
-        if ((*sd_ctx)->sd == NULL) {
-            free(*sd_ctx);
-            return SD_ERROR_MEMORY_ALLOCATION;
-        }
+            (*sd_ctx)->sd = new StableDiffusionGGML(n_threads,
+                                                    vae_decode_only,
+                                                    free_params_immediately,
+                                                    lora_model_dir,
+                                                    rng_type);
+            if ((*sd_ctx)->sd == NULL) {
+                free(*sd_ctx);
+                ggml_error_jmp_set = 0;
+                return SD_ERROR_MEMORY_ALLOCATION;
+            }
 
         if (!(*sd_ctx)->sd->load_from_file(model_path,
                                            clip_l_path,
@@ -1082,15 +1087,24 @@ SDError new_sd_ctx(sd_ctx_t** sd_ctx,
                                            keep_vae_on_cpu)) {
             delete (*sd_ctx)->sd;
             free(*sd_ctx);
+            ggml_error_jmp_set = 0;
             return SD_ERROR_PROCESSING;
         }
 
-        return SD_SUCCESS;
-    } catch (const std::exception& e) {
-        LOG_ERROR("Exception in new_sd_ctx: %s", e.what());
-        return SD_ERROR_PROCESSING;
-    } catch (...) {
-        LOG_ERROR("Unknown exception in new_sd_ctx");
+            ggml_error_jmp_set = 0;
+            return SD_SUCCESS;
+        } catch (const std::exception& e) {
+            LOG_ERROR("Exception in new_sd_ctx: %s", e.what());
+            ggml_error_jmp_set = 0;
+            return SD_ERROR_PROCESSING;
+        } catch (...) {
+            LOG_ERROR("Unknown exception in new_sd_ctx");
+            ggml_error_jmp_set = 0;
+            return SD_ERROR_PROCESSING;
+        }
+    } else {
+        LOG_ERROR("GGML error in new_sd_ctx: %s", ggml_get_error_message());
+        ggml_error_jmp_set = 0;
         return SD_ERROR_PROCESSING;
     }
 }
@@ -1416,55 +1430,59 @@ SDError txt2img(sd_ctx_t* sd_ctx,
                 bool normalize_input,
                 const char* input_id_images_path_c_str) {
     struct ggml_context* work_ctx = NULL;
-    try {
-        LOG_DEBUG("txt2img %dx%d", width, height);
-        if (sd_ctx == NULL) {
-            return SD_ERROR_INVALID_CONTEXT;
-        }
+    ggml_error_jmp_set = 1;
+    if (setjmp(ggml_error_jmp_buf) == 0) {
+        try {
+            LOG_DEBUG("txt2img %dx%d", width, height);
+            if (sd_ctx == NULL) {
+                ggml_error_jmp_set = 0;
+                return SD_ERROR_INVALID_CONTEXT;
+            }
 
-        struct ggml_init_params params;
-        params.mem_size = static_cast<size_t>(10 * 1024 * 1024);  // 10 MB
-        if (sd_ctx->sd->version == VERSION_SD3_2B || sd_ctx->sd->version == VERSION_SD3_5_8B) {
-            params.mem_size *= 3;
+            struct ggml_init_params params;
+            params.mem_size = static_cast<size_t>(10 * 1024 * 1024);  // 10 MB
+            if (sd_ctx->sd->version == VERSION_SD3_2B || sd_ctx->sd->version == VERSION_SD3_5_8B) {
+                params.mem_size *= 3;
     }
     if (sd_ctx->sd->version == VERSION_FLUX_DEV || sd_ctx->sd->version == VERSION_FLUX_SCHNELL) {
         params.mem_size *= 4;
-        }
-        if (sd_ctx->sd->stacked_id) {
-            params.mem_size += static_cast<size_t>(10 * 1024 * 1024);  // 10 MB
-        }
-        params.mem_size += width * height * 3 * sizeof(float);
-        params.mem_size *= batch_count;
-        params.mem_buffer = NULL;
-        params.no_alloc   = false;
-        // LOG_DEBUG("mem_size %u ", params.mem_size);
+            }
+            if (sd_ctx->sd->stacked_id) {
+                params.mem_size += static_cast<size_t>(10 * 1024 * 1024);  // 10 MB
+            }
+            params.mem_size += width * height * 3 * sizeof(float);
+            params.mem_size *= batch_count;
+            params.mem_buffer = NULL;
+            params.no_alloc   = false;
+            // LOG_DEBUG("mem_size %u ", params.mem_size);
 
-        work_ctx = ggml_init(params);
-        if (!work_ctx) {
-            LOG_ERROR("ggml_init() failed");
-            return SD_ERROR_MEMORY_ALLOCATION;
-        }
+            work_ctx = ggml_init(params);
+            if (!work_ctx) {
+                LOG_ERROR("ggml_init() failed");
+                ggml_error_jmp_set = 0;
+                return SD_ERROR_MEMORY_ALLOCATION;
+            }
 
-        size_t t0 = ggml_time_ms();
+            size_t t0 = ggml_time_ms();
 
-        std::vector<float> sigmas = sd_ctx->sd->denoiser->get_sigmas(sample_steps);
+            std::vector<float> sigmas = sd_ctx->sd->denoiser->get_sigmas(sample_steps);
 
-        int C = 4;
-        if (sd_ctx->sd->version == VERSION_SD3_2B || sd_ctx->sd->version == VERSION_SD3_5_8B) {
+            int C = 4;
+            if (sd_ctx->sd->version == VERSION_SD3_2B || sd_ctx->sd->version == VERSION_SD3_5_8B) {
         C = 16;
     } else if (sd_ctx->sd->version == VERSION_FLUX_DEV || sd_ctx->sd->version == VERSION_FLUX_SCHNELL) {
-            C = 16;
-        }
-        int W                    = width / 8;
-        int H                    = height / 8;
-        ggml_tensor* init_latent = ggml_new_tensor_4d(work_ctx, GGML_TYPE_F32, W, H, C, 1);
-        if (sd_ctx->sd->version == VERSION_SD3_2B || sd_ctx->sd->version == VERSION_SD3_5_8B) {
-            ggml_set_f32(init_latent, 0.0609f);
+                C = 16;
+            }
+            int W                    = width / 8;
+            int H                    = height / 8;
+            ggml_tensor* init_latent = ggml_new_tensor_4d(work_ctx, GGML_TYPE_F32, W, H, C, 1);
+            if (sd_ctx->sd->version == VERSION_SD3_2B || sd_ctx->sd->version == VERSION_SD3_5_8B) {
+                ggml_set_f32(init_latent, 0.0609f);
     } else if (sd_ctx->sd->version == VERSION_FLUX_DEV || sd_ctx->sd->version == VERSION_FLUX_SCHNELL) {
         ggml_set_f32(init_latent, 0.1159f);
-        } else {
-            ggml_set_f32(init_latent, 0.f);
-        }
+            } else {
+                ggml_set_f32(init_latent, 0.f);
+            }
 
         *result_images = generate_image(sd_ctx,
                                         work_ctx,
@@ -1486,30 +1504,42 @@ SDError txt2img(sd_ctx_t* sd_ctx,
                                         normalize_input,
                                         input_id_images_path_c_str);
 
-        if (*result_images == NULL) {
+            if (*result_images == NULL) {
+                ggml_free(work_ctx);
+                ggml_error_jmp_set = 0;
+                return SD_ERROR_PROCESSING;
+            }
+
+            *result_count = batch_count;
+
+            size_t t1 = ggml_time_ms();
+
+            LOG_INFO("txt2img completed in %.2fs", (t1 - t0) * 1.0f / 1000);
+
             ggml_free(work_ctx);
+            ggml_error_jmp_set = 0;
+            return SD_SUCCESS;
+        } catch (const std::exception& e) {
+            LOG_ERROR("Exception in txt2img: %s", e.what());
+            if (work_ctx) {
+                ggml_free(work_ctx);
+            }
+            ggml_error_jmp_set = 0;
+            return SD_ERROR_PROCESSING;
+        } catch (...) {
+            LOG_ERROR("Unknown exception in txt2img");
+            if (work_ctx) {
+                ggml_free(work_ctx);
+            }
+            ggml_error_jmp_set = 0;
             return SD_ERROR_PROCESSING;
         }
-
-        *result_count = batch_count;
-
-        size_t t1 = ggml_time_ms();
-
-        LOG_INFO("txt2img completed in %.2fs", (t1 - t0) * 1.0f / 1000);
-
-        ggml_free(work_ctx);
-        return SD_SUCCESS;
-    } catch (const std::exception& e) {
-        LOG_ERROR("Exception in txt2img: %s", e.what());
+    } else {
+        LOG_ERROR("GGML error in txt2img: %s", ggml_get_error_message());
         if (work_ctx) {
             ggml_free(work_ctx);
         }
-        return SD_ERROR_PROCESSING;
-    } catch (...) {
-        LOG_ERROR("Unknown exception in txt2img");
-        if (work_ctx) {
-            ggml_free(work_ctx);
-        }
+        ggml_error_jmp_set = 0;
         return SD_ERROR_PROCESSING;
     }
 }
