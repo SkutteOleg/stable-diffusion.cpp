@@ -153,7 +153,7 @@ struct LoraModel : public GGMLRunner {
             GGML_ASSERT(ggml_nelements(updown) == ggml_nelements(weight));
             updown = ggml_scale_inplace(compute_ctx, updown, scale_value);
             ggml_tensor* final_weight;
-            if (weight->type != GGML_TYPE_F32 && weight->type != GGML_TYPE_F16) {
+            if (weight->type != GGML_TYPE_F32) {
                 // final_weight = ggml_new_tensor(compute_ctx, GGML_TYPE_F32, ggml_n_dims(weight), weight->ne);
                 // final_weight = ggml_cpy(compute_ctx, weight, final_weight);
                 final_weight = to_f32(compute_ctx, weight);
@@ -162,7 +162,7 @@ struct LoraModel : public GGMLRunner {
             } else {
                 final_weight = ggml_add_inplace(compute_ctx, weight, updown);
             }
-            // final_weight = ggml_add_inplace(compute_ctx, weight, updown);  // apply directly
+            //final_weight = ggml_add_inplace(compute_ctx, weight, updown);  // apply directly
             ggml_build_forward_expand(gf, final_weight);
         }
 
