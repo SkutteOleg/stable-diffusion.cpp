@@ -551,13 +551,13 @@ public:
             }
         }
 
-        auto comp_vis_denoiser = std::dynamic_pointer_cast<CompVisDenoiser>(denoiser);
+        /*auto comp_vis_denoiser = std::dynamic_pointer_cast<CompVisDenoiser>(denoiser);
         if (comp_vis_denoiser) {
             for (int i = 0; i < TIMESTEPS; i++) {
                 comp_vis_denoiser->sigmas[i]     = std::sqrt((1 - ((float*)alphas_cumprod_tensor->data)[i]) / ((float*)alphas_cumprod_tensor->data)[i]);
                 comp_vis_denoiser->log_sigmas[i] = std::log(comp_vis_denoiser->sigmas[i]);
             }
-        }
+        }*/
 
         LOG_DEBUG("finished loaded file");
         ggml_free(ctx);
