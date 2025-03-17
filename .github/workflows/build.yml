@@ -163,11 +163,15 @@ jobs:
           - build: "avx512"
             defines: "-DGGML_NATIVE=OFF -DGGML_AVX512=ON -DGGML_AVX=ON -DGGML_AVX2=ON -DSD_BUILD_SHARED_LIBS=ON"
           - build: "cuda12"
-            defines: "-DSD_CUDA=ON -DSD_BUILD_SHARED_LIBS=ON -DCMAKE_CUDA_ARCHITECTURES=90;89;80;75"
+            defines: "-DSD_CUDA=ON -DSD_BUILD_SHARED_LIBS=ON"
+          - build: "cuda12-noavx"
+            defines: "-DGGML_NATIVE=OFF -DSD_CUDA=ON -DGGML_AVX=OFF -DGGML_AVX2=OFF -DGGML_FMA=OFF -DSD_BUILD_SHARED_LIBS=ON"
           # - build: "rocm5.5"
           #   defines: '-G Ninja -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++ -DSD_HIPBLAS=ON -DCMAKE_BUILD_TYPE=Release -DAMDGPU_TARGETS="gfx1100;gfx1102;gfx1030" -DSD_BUILD_SHARED_LIBS=ON'
           - build: 'vulkan'
             defines: "-DSD_VULKAN=ON -DSD_BUILD_SHARED_LIBS=ON"
+          - build: 'vulkan-noavx'
+            defines: "-DGGML_NATIVE=OFF -DSD_VULKAN=ON -DGGML_AVX=OFF -DGGML_AVX2=OFF -DGGML_FMA=OFF -DSD_BUILD_SHARED_LIBS=ON"
     steps:
       - name: Clone
         id: checkout
@@ -177,10 +181,10 @@ jobs:
 
       - name: Install cuda-toolkit
         id: cuda-toolkit
-        if: ${{ matrix.build == 'cuda12' }}
+        if: ${{ matrix.build == 'cuda12' || matrix.build == 'cuda12-noavx' }}
         uses: Jimver/cuda-toolkit@v0.2.19
         with:
-          cuda: "12.6.2"
+          cuda: "12.4.0"
           method: "network"
           sub-packages: '["nvcc", "cudart", "cublas", "cublas_dev", "thrust", "visual_studio_integration"]'
 
@@ -199,7 +203,7 @@ jobs:
           version: 1.11.1
       - name: Install Vulkan SDK
         id: get_vulkan
-        if: ${{ matrix.build == 'vulkan' }}
+        if: ${{ matrix.build == 'vulkan' || matrix.build == 'vulkan-noavx' }}
         run: |
           curl.exe -o $env:RUNNER_TEMP/VulkanSDK-Installer.exe -L "https://sdk.lunarg.com/sdk/download/${env:VULKAN_VERSION}/windows/VulkanSDK-${env:VULKAN_VERSION}-Installer.exe"
           & "$env:RUNNER_TEMP\VulkanSDK-Installer.exe" --accept-licenses --default-answer --confirm-command install
