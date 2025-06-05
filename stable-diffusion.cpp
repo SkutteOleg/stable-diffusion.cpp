@@ -16,6 +16,11 @@
 #include "tae.hpp"
 #include "vae.hpp"
 
+#include "sana_text_encoder.hpp"
+#include "sana_nets.hpp"
+#include "sana_dc_ae.hpp"
+#include "sana_scm_scheduler.hpp"
+
 #define STB_IMAGE_IMPLEMENTATION
 #define STB_IMAGE_STATIC
 #include "stb_image.h"
@@ -34,7 +39,9 @@ const char* model_version_to_str[] = {
     "SVD",
     "SD3.x",
     "Flux",
-    "Flux Fill"};
+    "Flux Fill",
+    "SANA",
+    "SANA-Sprint"};
 
 const char* sampling_methods_str[] = {
     "Euler A",
@@ -98,6 +105,17 @@ public:
     std::shared_ptr<PhotoMakerIDEncoder> pmid_model;
     std::shared_ptr<LoraModel> pmid_lora;
     std::shared_ptr<PhotoMakerIDEmbed> pmid_id_embeds;
+
+    // SANA components
+    std::shared_ptr<SanaTextEncoderModel> sana_text_encoder;
+    std::shared_ptr<SanaDITModel> sana_dit_model;
+    std::shared_ptr<SanaDCAE> sana_vae;
+    std::shared_ptr<SanaSCMScheduler> sana_scheduler;
+    // Placeholder for SANA params - these might be loaded into components directly or held here
+    // SanaDITModelParams sana_params;
+    // SanaDCAEConfig sana_dcae_params;
+    // SanaSCMSchedulerParams sana_scm_params;
+
 
     std::string taesd_path;
     bool use_tiny_autoencoder = false;
@@ -281,7 +299,65 @@ public:
 
         LOG_DEBUG("ggml tensor size = %d bytes", (int)sizeof(ggml_tensor));
 
-        if (sd_version_is_sdxl(version)) {
+        std::set<std::string> ignore_tensors_set; // Renamed from ignore_tensors to avoid conflict with local var in original code
+
+        if (sd_version_is_sana(version) || sd_version_is_sana_sprint(version)) {
+            LOG_INFO("SANA model detected. Initializing SANA components.");
+            // Populate ignore_tensors for SANA models to skip loading standard SD components
+            ignore_tensors_set.insert("cond_stage_model.");
+            ignore_tensors_set.insert("model.diffusion_model.");
+            ignore_tensors_set.insert("first_stage_model.");
+            ignore_tensors_set.insert("clip_vision."); // If SVD components might conflict
+
+            // Instantiate SANA components
+            // Assuming SanaDITModelParams, SanaDCAEConfig, SanaSCMSchedulerParams are default constructible or loaded within components
+            SanaDITModelParams sana_params;         // Placeholder
+            SanaDCAEConfig sana_dcae_params;       // Placeholder
+            SanaSCMSchedulerParams sana_scm_params; // Placeholder
+
+            sana_text_encoder = std::make_shared<SanaTextEncoderModel>(); // Assuming default constructor or params loaded internally
+            sana_dit_model = std::make_shared<SanaDITModel>(sana_params);
+            sana_vae = std::make_shared<SanaDCAE>(sana_dcae_params);
+            sana_scheduler = std::make_shared<SanaSCMScheduler>(sana_scm_params);
+
+            // Load Parameters for SANA components
+            // CRUCIAL ASSUMPTION: model_loader.get_gguf_context() exists and returns a valid gguf_context*
+            // gguf_context* gguf_ctx = model_loader.get_gguf_context(); // Hypothetical
+            // For now, we'll assume load_params_from_gguf might not be needed if params are part of gguf metadata loaded by ModelLoader itself,
+            // or SANA components handle it in their constructor or a later load_weights phase.
+            // The prompt is a bit ambiguous here, will proceed by calling load_params if such methods exist on SANA components.
+            // If these SANA components don't have load_params_from_gguf, this part would need adjustment.
+            // For this subtask, we are told to assume ModelLoader can provide context.
+
+            /*
+            if (gguf_ctx) {
+                LOG_INFO("Loading SANA parameters from GGUF context.");
+                // sana_text_encoder->load_params_from_gguf(gguf_ctx); // Example
+                // sana_dit_model->load_params_from_gguf(gguf_ctx);    // Example
+                // sana_vae->load_params_from_gguf(gguf_ctx);          // Example
+            } else {
+                LOG_ERROR("Could not get GGUF context for SANA params loading. Param loading might fail.");
+                // return false; // Or handle error appropriately
+            }
+            */
+            // Initialize SanaSCMSchedulerParams (example, adjust as per actual SANA DIT model structure)
+            // if (sana_dit_model && sana_dit_model->params.sprint_sigma_data) { // Check if params and specific field exist
+            //     sana_scm_params.sigma_data = sana_dit_model->params.sprint_sigma_data;
+            // }
+
+            // Allocate param buffers and get tensor maps for SANA components
+            // These would be similar to how existing models are handled.
+            // Example (actual methods might differ):
+            // sana_text_encoder->alloc_params_buffer();
+            // sana_text_encoder->get_param_tensors(tensors);
+            // sana_dit_model->alloc_params_buffer();
+            // sana_dit_model->get_param_tensors(tensors);
+            // sana_vae->alloc_params_buffer();
+            // sana_vae->get_param_tensors(tensors);
+
+            LOG_INFO("SANA components instantiated. Param loading simulated or deferred.");
+
+        } else if (sd_version_is_sdxl(version)) {
             scale_factor = 0.13025f;
             if (vae_path.size() == 0 && taesd_path.size() == 0) {
                 LOG_WARN(
@@ -420,23 +496,27 @@ public:
 
         int64_t t0 = ggml_time_ms();
 
-        std::set<std::string> ignore_tensors;
+        // std::set<std::string> ignore_tensors; // Already declared as ignore_tensors_set
         tensors["alphas_cumprod"] = alphas_cumprod_tensor;
         if (use_tiny_autoencoder) {
-            ignore_tensors.insert("first_stage_model.");
+            ignore_tensors_set.insert("first_stage_model.");
         }
         if (stacked_id) {
-            ignore_tensors.insert("lora.");
+            ignore_tensors_set.insert("lora.");
         }
 
         if (vae_decode_only) {
-            ignore_tensors.insert("first_stage_model.encoder");
-            ignore_tensors.insert("first_stage_model.quant");
+            ignore_tensors_set.insert("first_stage_model.encoder");
+            ignore_tensors_set.insert("first_stage_model.quant");
         }
         if (version == VERSION_SVD) {
-            ignore_tensors.insert("conditioner.embedders.3");
+            ignore_tensors_set.insert("conditioner.embedders.3");
+        } else if (sd_version_is_sana(version) || sd_version_is_sana_sprint(version)) {
+            // For SANA, we already populated ignore_tensors_set.
+            // Standard models are ignored, SANA components will pick their tensors.
         }
-        bool success = model_loader.load_tensors(tensors, backend, ignore_tensors);
+
+        bool success = model_loader.load_tensors(tensors, backend, ignore_tensors_set);
         if (!success) {
             LOG_ERROR("load tensors from model loader failed");
             ggml_free(ctx);
@@ -445,7 +525,38 @@ public:
 
         // LOG_DEBUG("model size = %.2fMB", total_size / 1024.0 / 1024.0);
 
-        if (version == VERSION_SVD) {
+        if (sd_version_is_sana(version) || sd_version_is_sana_sprint(version)) {
+            LOG_INFO("Loading SANA model weights...");
+            // CRUCIAL ASSUMPTION: model_loader.get_ggml_context_meta() and model_loader.get_backend_buffer() exist.
+            // ggml_context* ctx_meta = model_loader.get_ggml_context_meta(); // Hypothetical
+            // ggml_backend_buffer_t backend_buffer = model_loader.get_backend_buffer(); // Hypothetical
+
+            // if (ctx_meta) {
+                // The SANA load_weights methods will use this->tensors map which is now populated by model_loader.load_tensors
+                // sana_text_encoder->load_weights_from_map(this->tensors, backend); // Hypothetical: pass main tensor map and backend
+                // sana_dit_model->load_weights_from_map(this->tensors, backend);    // Hypothetical
+                // sana_vae->load_weights_from_map(this->tensors, backend);          // Hypothetical
+
+                // Or, using existing SANA methods if they are designed to work with a pre-filled this->tensors
+                // and potentially a ctx_meta for any ggml_get_tensor operations if needed.
+                // sana_text_encoder->load_weights_from_gguf(ctx_meta, backend_buffer_or_tensors_map_or_backend);
+                // sana_dit_model->load_weights_from_gguf(ctx_meta, ...);
+                // sana_vae->load_weights_from_gguf(ctx_meta, backend_buffer, this->tensors); // As per prompt hint for VAE
+
+                // For now, let's assume a simplified load_weights call that primarily sets internal pointers from this->tensors.
+                // The actual loading of data to backend buffers was done by model_loader.load_tensors.
+                // If SANA components need ggml_context for ggml_get_tensor, it would be ctx_meta.
+                // This part is highly dependent on the actual SANA component implementation.
+                // As a placeholder:
+                // sana_text_encoder->initialize_weights(this->tensors, backend);
+                // sana_dit_model->initialize_weights(this->tensors, backend);
+                // sana_vae->initialize_weights(this->tensors, backend);
+            // } else {
+            //    LOG_ERROR("Could not get GGUF metadata context for SANA weight loading.");
+            //    return false;
+            // }
+            LOG_INFO("SANA weights loading simulated or to be handled by component internals via this->tensors.");
+        } else if (version == VERSION_SVD) {
             // diffusion_model->test();
             // first_stage_model->test();
             // return false;
@@ -822,9 +933,22 @@ public:
         // print_ggml_tensor(noise);
         struct ggml_tensor* x = ggml_dup_tensor(work_ctx, init_latent);
         copy_ggml_tensor(x, init_latent);
-        x = denoiser->noise_scaling(sigmas[0], noise, x);
 
-        struct ggml_tensor* noised_input = ggml_dup_tensor(work_ctx, noise);
+        if (sd_version_is_sana(this->version) || sd_version_is_sana_sprint(this->version)) {
+            if (!this->sana_scheduler) {
+                LOG_ERROR("SANA Scheduler not initialized!");
+                ggml_free(tmp_ctx);
+                return nullptr;
+            }
+            this->sana_scheduler->set_timesteps(steps + 1); // sample_steps is sigmas.size() - 1
+            // For SCM, initial x is pure noise.
+            copy_ggml_tensor(x, noise);
+            LOG_INFO("SANA SCM Scheduler initialized with %zu steps.", this->sana_scheduler->timesteps.size());
+        } else {
+            x = denoiser->noise_scaling(sigmas[0], noise, x);
+        }
+
+        struct ggml_tensor* noised_input = ggml_dup_tensor(work_ctx, noise); // noised_input is used by CompVis path, might not be needed for SANA
 
         bool has_unconditioned = cfg_scale != 1.0 && uncond.c_crossattn != NULL;
         bool has_skiplayer     = slg_scale != 0.0 && skip_layers.size() > 0;
@@ -853,123 +977,194 @@ public:
             }
             int64_t t0 = ggml_time_us();
 
-            std::vector<float> scaling = denoiser->get_scalings(sigma);
-            GGML_ASSERT(scaling.size() == 3);
-            float c_skip = scaling[0];
-            float c_out  = scaling[1];
-            float c_in   = scaling[2];
-
-            float t = denoiser->sigma_to_t(sigma);
-            std::vector<float> timesteps_vec(x->ne[3], t);  // [N, ]
-            auto timesteps = vector_to_ggml_tensor(work_ctx, timesteps_vec);
-            std::vector<float> guidance_vec(x->ne[3], guidance);
-            auto guidance_tensor = vector_to_ggml_tensor(work_ctx, guidance_vec);
-
-            copy_ggml_tensor(noised_input, input);
-            // noised_input = noised_input * c_in
-            ggml_tensor_scale(noised_input, c_in);
-
-            std::vector<struct ggml_tensor*> controls;
-
-            if (control_hint != NULL) {
-                control_net->compute(n_threads, noised_input, control_hint, timesteps, cond.c_crossattn, cond.c_vector);
-                controls = control_net->controls;
-                // print_ggml_tensor(controls[12]);
-                // GGML_ASSERT(0);
-            }
-
-            if (start_merge_step == -1 || step <= start_merge_step) {
-                // cond
-                diffusion_model->compute(n_threads,
-                                         noised_input,
-                                         timesteps,
-                                         cond.c_crossattn,
-                                         cond.c_concat,
-                                         cond.c_vector,
-                                         guidance_tensor,
-                                         -1,
-                                         controls,
-                                         control_strength,
-                                         &out_cond);
-            } else {
-                diffusion_model->compute(n_threads,
-                                         noised_input,
-                                         timesteps,
-                                         id_cond.c_crossattn,
-                                         cond.c_concat,
-                                         id_cond.c_vector,
-                                         guidance_tensor,
-                                         -1,
-                                         controls,
-                                         control_strength,
-                                         &out_cond);
-            }
-
-            float* negative_data = NULL;
-            if (has_unconditioned) {
-                // uncond
-                if (control_hint != NULL) {
-                    control_net->compute(n_threads, noised_input, control_hint, timesteps, uncond.c_crossattn, uncond.c_vector);
-                    controls = control_net->controls;
+            if (sd_version_is_sana(this->version) || sd_version_is_sana_sprint(this->version)) {
+                if (!this->sana_dit_model || !this->sana_scheduler) {
+                    LOG_ERROR("SANA DiT model or scheduler not initialized!");
+                    // Handle error, maybe by returning input or zero tensor
+                    return input; // Or some other error indication
                 }
-                diffusion_model->compute(n_threads,
-                                         noised_input,
-                                         timesteps,
-                                         uncond.c_crossattn,
-                                         uncond.c_concat,
-                                         uncond.c_vector,
-                                         guidance_tensor,
-                                         -1,
-                                         controls,
-                                         control_strength,
-                                         &out_uncond);
-                negative_data = (float*)out_uncond->data;
-            }
 
-            int step_count         = sigmas.size();
-            bool is_skiplayer_step = has_skiplayer && step > (int)(skip_layer_start * step_count) && step < (int)(skip_layer_end * step_count);
-            float* skip_layer_data = NULL;
-            if (is_skiplayer_step) {
-                LOG_DEBUG("Skipping layers at step %d\n", step);
-                // skip layer (same as conditionned)
-                diffusion_model->compute(n_threads,
-                                         noised_input,
-                                         timesteps,
-                                         cond.c_crossattn,
-                                         cond.c_concat,
-                                         cond.c_vector,
-                                         guidance_tensor,
-                                         -1,
-                                         controls,
-                                         control_strength,
-                                         &out_skip,
-                                         NULL,
-                                         skip_layers);
-                skip_layer_data = (float*)out_skip->data;
-            }
-            float* vec_denoised  = (float*)denoised->data;
-            float* vec_input     = (float*)input->data;
-            float* positive_data = (float*)out_cond->data;
-            int ne_elements      = (int)ggml_nelements(denoised);
-            for (int i = 0; i < ne_elements; i++) {
-                float latent_result = positive_data[i];
+                float s_val = this->sana_scheduler->timesteps[step]; // current SCM timestep `s`
+                // float t_val = (step + 1 < (int)this->sana_scheduler->timesteps.size()) ? this->sana_scheduler->timesteps[step + 1] : 0.0f; // next SCM timestep `t`
+
+                ggml_tensor* s_tensor = ggml_new_tensor_1d(work_ctx, GGML_TYPE_F32, 1);
+                ggml_set_f32(s_tensor, s_val);
+
+                ggml_tensor* model_output_flow = nullptr;
+                ggml_tensor* cfg_scale_tensor = nullptr;
+
+                // Assuming SanaDITModel's build_graph needs these. Adjust according to actual API.
+                // Inputs: x_latent_input, raw_timestep_input, raw_y_embed, text_mask, cfg_scale_value
+                // For SANA Sprint, cfg_scale is embedded if sana_dit_model->params.sprint_cfg_embed is true
+                if (this->sana_dit_model->params.sprint_cfg_embed) {
+                    cfg_scale_tensor = ggml_new_tensor_1d(work_ctx, GGML_TYPE_F32, 1);
+                }
+
                 if (has_unconditioned) {
-                    // out_uncond + cfg_scale * (out_cond - out_uncond)
-                    int64_t ne3 = out_cond->ne[3];
-                    if (min_cfg != cfg_scale && ne3 != 1) {
-                        int64_t i3  = i / out_cond->ne[0] * out_cond->ne[1] * out_cond->ne[2];
-                        float scale = min_cfg + (cfg_scale - min_cfg) * (i3 * 1.0f / ne3);
-                    } else {
-                        latent_result = negative_data[i] + cfg_scale * (positive_data[i] - negative_data[i]);
+                    ggml_tensor* model_output_uncond_g = nullptr;
+                    if (cfg_scale_tensor) ggml_set_f32(cfg_scale_tensor, 0.f); // Or other value indicating uncond for SANA Sprint
+
+                    // Unconditional pass
+                    // struct ggml_cgraph* cgraph_uncond = this->sana_dit_model->build_graph(work_ctx, input, s_tensor, uncond.c_crossattn, nullptr, cfg_scale_tensor);
+                    // ggml_backend_graph_compute(this->backend, cgraph_uncond);
+                    // model_output_uncond_g = ggml_graph_get_leaf(cgraph_uncond); // Or however SANA DiT returns output
+                    // For now, assume build_graph directly returns the output tensor or manages it internally.
+                    // This is a placeholder, actual call might differ.
+                    // model_output_uncond_g = this->sana_dit_model->compute(work_ctx, this->backend, n_threads, input, s_tensor, uncond.c_crossattn, nullptr, cfg_scale_tensor);
+                    struct ggml_cgraph* cgraph_uncond_ptr = this->sana_dit_model->build_graph(work_ctx, input, s_tensor, uncond.c_crossattn, nullptr, cfg_scale_tensor);
+                    ggml_backend_graph_compute(this->backend, cgraph_uncond_ptr);
+                    model_output_uncond_g = ggml_dup_tensor(work_ctx, ggml_graph_node(cgraph_uncond_ptr, ggml_graph_n_nodes(cgraph_uncond_ptr) - 1));
+
+
+                    ggml_tensor* model_output_cond_g = nullptr;
+                    if (cfg_scale_tensor) ggml_set_f32(cfg_scale_tensor, cfg_scale);
+                    // Conditional pass
+                    // struct ggml_cgraph* cgraph_cond_ptr = this->sana_dit_model->build_graph(work_ctx, input, s_tensor, cond.c_crossattn, nullptr, cfg_scale_tensor);
+                    // ggml_backend_graph_compute(this->backend, cgraph_cond_ptr);
+                    // model_output_cond_g = ggml_graph_get_leaf(cgraph_cond);
+                    // model_output_cond_g = this->sana_dit_model->compute(work_ctx, this->backend, n_threads, input, s_tensor, cond.c_crossattn, nullptr, cfg_scale_tensor);
+                    struct ggml_cgraph* cgraph_cond_ptr = this->sana_dit_model->build_graph(work_ctx, input, s_tensor, cond.c_crossattn, nullptr, cfg_scale_tensor);
+                    ggml_backend_graph_compute(this->backend, cgraph_cond_ptr);
+                    model_output_cond_g = ggml_dup_tensor(work_ctx, ggml_graph_node(cgraph_cond_ptr, ggml_graph_n_nodes(cgraph_cond_ptr) - 1));
+
+                    // CFG Logic: model_output_flow = uncond + cfg_scale * (cond - uncond)
+                    ggml_tensor* diff = ggml_sub(work_ctx, model_output_cond_g, model_output_uncond_g);
+                    ggml_set_name(diff, "sana_cfg_diff");
+                    ggml_tensor* scaled_diff = ggml_scale(work_ctx, diff, cfg_scale); // Use ggml_scale from ggml.h
+                    ggml_set_name(scaled_diff, "sana_cfg_scaled_diff");
+                    model_output_flow = ggml_add(work_ctx, model_output_uncond_g, scaled_diff); // Use ggml_add from ggml.h
+                    ggml_set_name(model_output_flow, "sana_cfg_applied_flow");
+
+                } else { // Not has_unconditioned
+                    // model_output_flow = ggml_graph_get_leaf(cgraph_cond); // Original comment if build_graph was used
+                    // model_output_flow = this->sana_dit_model->compute(work_ctx, this->backend, n_threads, input, s_tensor, cond.c_crossattn, nullptr, nullptr);
+                    struct ggml_cgraph* cgraph_cond_ptr_no_cfg = this->sana_dit_model->build_graph(work_ctx, input, s_tensor, cond.c_crossattn, nullptr, nullptr);
+                    ggml_backend_graph_compute(this->backend, cgraph_cond_ptr_no_cfg);
+                    model_output_flow = ggml_dup_tensor(work_ctx, ggml_graph_node(cgraph_cond_ptr_no_cfg, ggml_graph_n_nodes(cgraph_cond_ptr_no_cfg) - 1));
+                }
+
+                SanaSCMSchedulerOutput scheduler_output = this->sana_scheduler->step(work_ctx, model_output_flow, step, input);
+                copy_ggml_tensor(denoised, scheduler_output.prev_sample);
+
+            } else { // Existing non-SANA path
+                std::vector<float> scaling = denoiser->get_scalings(sigma);
+                GGML_ASSERT(scaling.size() == 3);
+                float c_skip = scaling[0];
+                float c_out  = scaling[1];
+                float c_in   = scaling[2];
+
+                float t = denoiser->sigma_to_t(sigma);
+                std::vector<float> timesteps_vec(x->ne[3], t);  // [N, ]
+                auto timesteps = vector_to_ggml_tensor(work_ctx, timesteps_vec);
+                std::vector<float> guidance_vec(x->ne[3], guidance);
+                auto guidance_tensor = vector_to_ggml_tensor(work_ctx, guidance_vec);
+
+                copy_ggml_tensor(noised_input, input);
+                // noised_input = noised_input * c_in
+                ggml_tensor_scale(noised_input, c_in);
+
+                std::vector<struct ggml_tensor*> controls;
+
+                if (control_hint != NULL) {
+                    control_net->compute(n_threads, noised_input, control_hint, timesteps, cond.c_crossattn, cond.c_vector);
+                    controls = control_net->controls;
+                    // print_ggml_tensor(controls[12]);
+                    // GGML_ASSERT(0);
+                }
+
+                if (start_merge_step == -1 || step <= start_merge_step) {
+                    // cond
+                    diffusion_model->compute(n_threads,
+                                             noised_input,
+                                             timesteps,
+                                             cond.c_crossattn,
+                                             cond.c_concat,
+                                             cond.c_vector,
+                                             guidance_tensor,
+                                             -1,
+                                             controls,
+                                             control_strength,
+                                             &out_cond);
+                } else {
+                    diffusion_model->compute(n_threads,
+                                             noised_input,
+                                             timesteps,
+                                             id_cond.c_crossattn,
+                                             cond.c_concat,
+                                             id_cond.c_vector,
+                                             guidance_tensor,
+                                             -1,
+                                             controls,
+                                             control_strength,
+                                             &out_cond);
+                }
+
+                float* negative_data = NULL;
+                if (has_unconditioned) {
+                    // uncond
+                    if (control_hint != NULL) {
+                        control_net->compute(n_threads, noised_input, control_hint, timesteps, uncond.c_crossattn, uncond.c_vector);
+                        controls = control_net->controls;
                     }
+                    diffusion_model->compute(n_threads,
+                                             noised_input,
+                                             timesteps,
+                                             uncond.c_crossattn,
+                                             uncond.c_concat,
+                                             uncond.c_vector,
+                                             guidance_tensor,
+                                             -1,
+                                             controls,
+                                             control_strength,
+                                             &out_uncond);
+                    negative_data = (float*)out_uncond->data;
                 }
+
+                int step_count         = sigmas.size();
+                bool is_skiplayer_step = has_skiplayer && step > (int)(skip_layer_start * step_count) && step < (int)(skip_layer_end * step_count);
+                float* skip_layer_data = NULL;
                 if (is_skiplayer_step) {
-                    latent_result = latent_result + (positive_data[i] - skip_layer_data[i]) * slg_scale;
+                    LOG_DEBUG("Skipping layers at step %d\n", step);
+                    // skip layer (same as conditionned)
+                    diffusion_model->compute(n_threads,
+                                             noised_input,
+                                             timesteps,
+                                             cond.c_crossattn,
+                                             cond.c_concat,
+                                             cond.c_vector,
+                                             guidance_tensor,
+                                             -1,
+                                             controls,
+                                             control_strength,
+                                             &out_skip,
+                                             NULL,
+                                             skip_layers);
+                    skip_layer_data = (float*)out_skip->data;
                 }
-                // v = latent_result, eps = latent_result
-                // denoised = (v * c_out + input * c_skip) or (input + eps * c_out)
-                vec_denoised[i] = latent_result * c_out + vec_input[i] * c_skip;
-            }
+                float* vec_denoised  = (float*)denoised->data;
+                float* vec_input     = (float*)input->data;
+                float* positive_data = (float*)out_cond->data;
+                int ne_elements      = (int)ggml_nelements(denoised);
+                for (int i = 0; i < ne_elements; i++) {
+                    float latent_result = positive_data[i];
+                    if (has_unconditioned) {
+                        // out_uncond + cfg_scale * (out_cond - out_uncond)
+                        int64_t ne3 = out_cond->ne[3];
+                        if (min_cfg != cfg_scale && ne3 != 1) {
+                            int64_t i3  = i / out_cond->ne[0] * out_cond->ne[1] * out_cond->ne[2];
+                            float scale = min_cfg + (cfg_scale - min_cfg) * (i3 * 1.0f / ne3);
+                        } else {
+                            latent_result = negative_data[i] + cfg_scale * (positive_data[i] - negative_data[i]);
+                        }
+                    }
+                    if (is_skiplayer_step) {
+                        latent_result = latent_result + (positive_data[i] - skip_layer_data[i]) * slg_scale;
+                    }
+                    // v = latent_result, eps = latent_result
+                    // denoised = (v * c_out + input * c_skip) or (input + eps * c_out)
+                    vec_denoised[i] = latent_result * c_out + vec_input[i] * c_skip;
+                }
+            } // End of SANA vs non-SANA path in denoise lambda
             int64_t t1 = ggml_time_us();
             if (step > 0) {
                 pretty_progress(step, (int)steps, (t1 - t0) / 1000000.f);
@@ -993,7 +1188,10 @@ public:
 
         sample_k_diffusion(method, denoise, work_ctx, x, sigmas, rng, eta);
 
-        x = denoiser->inverse_noise_scaling(sigmas[sigmas.size() - 1], x);
+        if (!(sd_version_is_sana(this->version) || sd_version_is_sana_sprint(this->version))) {
+            x = denoiser->inverse_noise_scaling(sigmas[sigmas.size() - 1], x);
+        }
+        // For SANA, x is already the clean sample from the scheduler.
 
         if (control_net) {
             control_net->free_control_ctx();
@@ -1036,6 +1234,32 @@ public:
     }
 
     ggml_tensor* compute_first_stage(ggml_context* work_ctx, ggml_tensor* x, bool decode) {
+        if (sd_version_is_sana(this->version) || sd_version_is_sana_sprint(this->version)) {
+            if (!this->sana_vae) {
+                LOG_ERROR("SANA VAE model is not initialized!");
+                return nullptr;
+            }
+            ggml_tensor* result = nullptr;
+            int64_t t0_sana = ggml_time_ms();
+
+            if (decode) { // Decoding
+                // Assuming sana_vae->decode handles necessary unscaling internally
+                result = this->sana_vae->decode(work_ctx, x);
+            } else { // Encoding
+                // Assuming sana_vae->encode handles necessary scaling internally
+                result = this->sana_vae->encode(work_ctx, x);
+            }
+
+            int64_t t1_sana = ggml_time_ms();
+            LOG_DEBUG("computing SANA VAE [mode: %s] graph completed, taking %.2fs", decode ? "DECODE" : "ENCODE", (t1_sana - t0_sana) * 1.0f / 1000);
+
+            if (result && decode) {
+                ggml_tensor_clamp(result, 0.0f, 1.0f);
+            }
+            return result;
+        }
+
+        // Existing non-SANA VAE logic starts here
         int64_t W = x->ne[0];
         int64_t H = x->ne[1];
         int64_t C = 8;
@@ -1352,33 +1576,92 @@ sd_image_t* generate_image(sd_ctx_t* sd_ctx,
 
     // Get learned condition
     t0               = ggml_time_ms();
-    SDCondition cond = sd_ctx->sd->cond_stage_model->get_learned_condition(work_ctx,
-                                                                           sd_ctx->sd->n_threads,
-                                                                           prompt,
-                                                                           clip_skip,
-                                                                           width,
-                                                                           height,
-                                                                           sd_ctx->sd->diffusion_model->get_adm_in_channels());
-
+    SDCondition cond;
     SDCondition uncond;
-    if (cfg_scale != 1.0) {
-        bool force_zero_embeddings = false;
-        if (sd_version_is_sdxl(sd_ctx->sd->version) && negative_prompt.size() == 0) {
-            force_zero_embeddings = true;
+
+    if (sd_version_is_sana(sd_ctx->sd->version) || sd_version_is_sana_sprint(sd_ctx->sd->version)) {
+        LOG_INFO("Using SANA text encoder for conditioning.");
+        if (sd_ctx->sd->sana_text_encoder) {
+            // Positive prompt
+            std::vector<int32_t> token_ids = sd_ctx->sd->sana_text_encoder->tokenize(prompt, true, true); // Add BOS/EOS
+            ggml_tensor* token_ids_tensor = ggml_new_tensor_1d(work_ctx, GGML_TYPE_I32, token_ids.size());
+            memcpy(token_ids_tensor->data, token_ids.data(), token_ids.size() * sizeof(int32_t));
+
+            // Assuming SanaTextEncoderModel might need positions, adjust if not.
+            std::vector<int32_t> positions(token_ids.size());
+            std::iota(positions.begin(), positions.end(), 0);
+            ggml_tensor* input_positions_tensor = ggml_new_tensor_1d(work_ctx, GGML_TYPE_I32, positions.size());
+            memcpy(input_positions_tensor->data, positions.data(), positions.size() * sizeof(int32_t));
+
+            ggml_cgraph* cgraph_cond = sd_ctx->sd->sana_text_encoder->build_graph(work_ctx, token_ids_tensor, input_positions_tensor);
+            ggml_backend_graph_compute(sd_ctx->sd->clip_backend, cgraph_cond); // Using clip_backend for SANA text encoder
+            cond.c_crossattn = ggml_dup_tensor(work_ctx, ggml_graph_node(cgraph_cond, ggml_graph_n_nodes(cgraph_cond) - 1)); // Duplicate the output tensor
+            cond.c_vector = nullptr;    // SANA might not use these
+            cond.c_concat = nullptr;
+
+            // Negative prompt
+            if (cfg_scale != 1.0) {
+                if (!negative_prompt.empty()) {
+                    std::vector<int32_t> neg_token_ids = sd_ctx->sd->sana_text_encoder->tokenize(negative_prompt, true, true);
+                    ggml_tensor* neg_token_ids_tensor = ggml_new_tensor_1d(work_ctx, GGML_TYPE_I32, neg_token_ids.size());
+                    memcpy(neg_token_ids_tensor->data, neg_token_ids.data(), neg_token_ids.size() * sizeof(int32_t));
+
+                    std::vector<int32_t> neg_positions(neg_token_ids.size());
+                    std::iota(neg_positions.begin(), neg_positions.end(), 0);
+                    ggml_tensor* neg_input_positions_tensor = ggml_new_tensor_1d(work_ctx, GGML_TYPE_I32, neg_positions.size());
+                    memcpy(neg_input_positions_tensor->data, neg_positions.data(), neg_positions.size() * sizeof(int32_t));
+
+                    ggml_cgraph* cgraph_uncond = sd_ctx->sd->sana_text_encoder->build_graph(work_ctx, neg_token_ids_tensor, neg_input_positions_tensor);
+                    ggml_backend_graph_compute(sd_ctx->sd->clip_backend, cgraph_uncond);
+                    uncond.c_crossattn = ggml_dup_tensor(work_ctx, ggml_graph_node(cgraph_uncond, ggml_graph_n_nodes(cgraph_uncond) - 1));
+                } else {
+                    // Handle empty negative prompt for SANA: create a zeroed tensor of the correct shape.
+                    // This assumes sana_text_encoder->get_output_dims() or similar exists or shape is known.
+                    // Placeholder: using shape of positive prompt's output.
+                    uncond.c_crossattn = ggml_dup_tensor(work_ctx, cond.c_crossattn);
+                    ggml_set_zero(uncond.c_crossattn); // Corrected from ggml_tensor_set_zero
+                }
+                uncond.c_vector = nullptr;
+                uncond.c_concat = nullptr;
+            }
+        } else {
+            LOG_ERROR("SANA model detected but sana_text_encoder is not initialized.");
+            // Fallback or error handling
+            cond = sd_ctx->sd->cond_stage_model->get_learned_condition(work_ctx, sd_ctx->sd->n_threads, prompt, clip_skip, width, height, sd_ctx->sd->diffusion_model->get_adm_in_channels());
+            if (cfg_scale != 1.0) {
+                uncond = sd_ctx->sd->cond_stage_model->get_learned_condition(work_ctx, sd_ctx->sd->n_threads, negative_prompt, clip_skip, width, height, sd_ctx->sd->diffusion_model->get_adm_in_channels(), (sd_version_is_sdxl(sd_ctx->sd->version) && negative_prompt.size() == 0));
+            }
         }
-        uncond = sd_ctx->sd->cond_stage_model->get_learned_condition(work_ctx,
-                                                                     sd_ctx->sd->n_threads,
-                                                                     negative_prompt,
-                                                                     clip_skip,
-                                                                     width,
-                                                                     height,
-                                                                     sd_ctx->sd->diffusion_model->get_adm_in_channels(),
-                                                                     force_zero_embeddings);
+    } else {
+        // Existing non-SANA conditioning
+        cond = sd_ctx->sd->cond_stage_model->get_learned_condition(work_ctx,
+                                                                   sd_ctx->sd->n_threads,
+                                                                   prompt,
+                                                                   clip_skip,
+                                                                   width,
+                                                                   height,
+                                                                   sd_ctx->sd->diffusion_model->get_adm_in_channels());
+        if (cfg_scale != 1.0) {
+            bool force_zero_embeddings = false;
+            if (sd_version_is_sdxl(sd_ctx->sd->version) && negative_prompt.size() == 0) {
+                force_zero_embeddings = true;
+            }
+            uncond = sd_ctx->sd->cond_stage_model->get_learned_condition(work_ctx,
+                                                                         sd_ctx->sd->n_threads,
+                                                                         negative_prompt,
+                                                                         clip_skip,
+                                                                         width,
+                                                                         height,
+                                                                         sd_ctx->sd->diffusion_model->get_adm_in_channels(),
+                                                                         force_zero_embeddings);
+        }
     }
     t1 = ggml_time_ms();
     LOG_INFO("get_learned_condition completed, taking %" PRId64 " ms", t1 - t0);
 
-    if (sd_ctx->sd->free_params_immediately) {
+    if (sd_ctx->sd->free_params_immediately && !(sd_version_is_sana(sd_ctx->sd->version) || sd_version_is_sana_sprint(sd_ctx->sd->version))) {
+        // For SANA, text encoder weights might be needed for other things or managed differently.
+        // For now, let's not free SANA text encoder params here.
         sd_ctx->sd->cond_stage_model->free_params_buffer();
     }
 

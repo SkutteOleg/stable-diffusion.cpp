@@ -29,8 +29,24 @@ enum SDVersion {
     VERSION_SD3,
     VERSION_FLUX,
     VERSION_FLUX_FILL,
+    VERSION_SANA,
+    VERSION_SANA_SPRINT,
     VERSION_COUNT,
 };
+
+static inline bool sd_version_is_sana(SDVersion version) {
+    if (version == VERSION_SANA) {
+        return true;
+    }
+    return false;
+}
+
+static inline bool sd_version_is_sana_sprint(SDVersion version) {
+    if (version == VERSION_SANA_SPRINT) {
+        return true;
+    }
+    return false;
+}
 
 static inline bool sd_version_is_flux(SDVersion version) {
     if (version == VERSION_FLUX || version == VERSION_FLUX_FILL) {

@@ -1487,6 +1487,27 @@ SDVersion ModelLoader::get_sd_version() {
     bool is_xl   = false;
     bool is_flux = false;
 
+    // SANA check
+    bool sana_tensor_found = false;
+    bool sana_sprint_tensor_found = false;
+    for (auto& tensor_storage_check : tensor_storages) {
+        if (tensor_storage_check.name.find("sana_dit.sprint_cfg_embedding.weight") != std::string::npos) {
+            sana_sprint_tensor_found = true;
+            break; // Found sprint, no need to check further for SANA specific tensors
+        }
+        if (tensor_storage_check.name.find("sana_dit.t_embedder.mlp.fc1.weight") != std::string::npos) {
+            sana_tensor_found = true;
+            // Don't break here, continue checking for sprint version
+        }
+    }
+
+    if (sana_sprint_tensor_found) {
+        return VERSION_SANA_SPRINT;
+    }
+    if (sana_tensor_found) {
+        return VERSION_SANA;
+    }
+
 #define found_family (is_xl || is_flux)
     for (auto& tensor_storage : tensor_storages) {
         if (!found_family) {
