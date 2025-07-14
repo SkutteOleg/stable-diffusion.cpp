@@ -1289,7 +1289,10 @@ enum schedule_t str_to_schedule(const char* str) {
     return SCHEDULE_COUNT;
 }
 
-void sd_ctx_params_init(sd_ctx_params_t* sd_ctx_params) {
+sd_err_t sd_ctx_params_init(sd_ctx_params_t* sd_ctx_params) {
+    if (!sd_ctx_params) {
+        return SD_ERR_INVALID_PARAM;
+    }
     memset((void*)sd_ctx_params, 0, sizeof(sd_ctx_params_t));
     sd_ctx_params->vae_decode_only         = true;
     sd_ctx_params->vae_tiling              = false;
@@ -1305,6 +1308,7 @@ void sd_ctx_params_init(sd_ctx_params_t* sd_ctx_params) {
     sd_ctx_params->chroma_use_dit_mask     = true;
     sd_ctx_params->chroma_use_t5_mask      = false;
     sd_ctx_params->chroma_t5_mask_pad      = 1;
+    return SD_OK;
 }
 
 char* sd_ctx_params_to_str(const sd_ctx_params_t* sd_ctx_params) {
@@ -1368,7 +1372,10 @@ char* sd_ctx_params_to_str(const sd_ctx_params_t* sd_ctx_params) {
     return buf;
 }
 
-void sd_img_gen_params_init(sd_img_gen_params_t* sd_img_gen_params) {
+sd_err_t sd_img_gen_params_init(sd_img_gen_params_t* sd_img_gen_params) {
+    if (!sd_img_gen_params) {
+        return SD_ERR_INVALID_PARAM;
+    }
     memset((void*)sd_img_gen_params, 0, sizeof(sd_img_gen_params_t));
     sd_img_gen_params->clip_skip                   = -1;
     sd_img_gen_params->guidance.txt_cfg            = 7.0f;
@@ -1391,6 +1398,7 @@ void sd_img_gen_params_init(sd_img_gen_params_t* sd_img_gen_params) {
     sd_img_gen_params->control_strength            = 0.9f;
     sd_img_gen_params->style_strength              = 20.f;
     sd_img_gen_params->normalize_input             = false;
+    return SD_OK;
 }
 
 char* sd_img_gen_params_to_str(const sd_img_gen_params_t* sd_img_gen_params) {
@@ -1453,7 +1461,10 @@ char* sd_img_gen_params_to_str(const sd_img_gen_params_t* sd_img_gen_params) {
     return buf;
 }
 
-void sd_vid_gen_params_init(sd_vid_gen_params_t* sd_vid_gen_params) {
+sd_err_t sd_vid_gen_params_init(sd_vid_gen_params_t* sd_vid_gen_params) {
+    if (!sd_vid_gen_params) {
+        return SD_ERR_INVALID_PARAM;
+    }
     memset((void*)sd_vid_gen_params, 0, sizeof(sd_vid_gen_params_t));
     sd_vid_gen_params->guidance.txt_cfg            = 7.0f;
     sd_vid_gen_params->guidance.min_cfg            = 1.0f;
@@ -1473,27 +1484,63 @@ void sd_vid_gen_params_init(sd_vid_gen_params_t* sd_vid_gen_params) {
     sd_vid_gen_params->motion_bucket_id            = 127;
     sd_vid_gen_params->fps                         = 6;
     sd_vid_gen_params->augmentation_level          = 0.f;
+    return SD_OK;
 }
 
 struct sd_ctx_t {
     StableDiffusionGGML* sd = NULL;
 };
 
-sd_ctx_t* new_sd_ctx(const sd_ctx_params_t* sd_ctx_params) {
+#define SD_GRACEFUL_EXIT(err, sd_ctx)                                          \
+    do {                                                                       \
+        if (err) {                                                             \
+            *err = SD_ERR_INTERNAL;                                            \
+            if (ggml_is_aborted()) {                                           \
+                *err = SD_ERR_GGML_ABORT;                                      \
+            }                                                                  \
+        }                                                                      \
+        if (sd_ctx) {                                                          \
+            if (sd_ctx->sd) {                                                  \
+                delete sd_ctx->sd;                                             \
+            }                                                                  \
+            free(sd_ctx);                                                      \
+        }                                                                      \
+        ggml_reset_abort();                                                    \
+        return NULL;                                                           \
+    } while (0)
+
+sd_ctx_t* new_sd_ctx(const sd_ctx_params_t* sd_ctx_params, sd_err_t* err) {
+    if (err) {
+        *err = SD_OK;
+    }
+    ggml_reset_abort();
     sd_ctx_t* sd_ctx = (sd_ctx_t*)malloc(sizeof(sd_ctx_t));
     if (sd_ctx == NULL) {
+        if (err) {
+            *err = SD_ERR_INTERNAL;
+        }
         return NULL;
     }
 
     sd_ctx->sd = new StableDiffusionGGML();
     if (sd_ctx->sd == NULL) {
+        if (err) {
+            *err = SD_ERR_INTERNAL;
+        }
+        free(sd_ctx);
         return NULL;
     }
 
     if (!sd_ctx->sd->init(sd_ctx_params)) {
+        if (err) {
+            *err = SD_ERR_INTERNAL;
+            if (ggml_is_aborted()) {
+                *err = SD_ERR_GGML_ABORT;
+            }
+        }
         delete sd_ctx->sd;
-        sd_ctx->sd = NULL;
         free(sd_ctx);
+        ggml_reset_abort();
         return NULL;
     }
     return sd_ctx;
@@ -1527,6 +1574,7 @@ sd_image_t* generate_image_internal(sd_ctx_t* sd_ctx,
                                     bool normalize_input,
                                     std::string input_id_images_path,
                                     std::vector<ggml_tensor*> ref_latents,
+                                    sd_err_t* err,
                                     ggml_tensor* concat_latent = NULL,
                                     ggml_tensor* denoise_mask  = NULL) {
     if (seed < 0) {
@@ -1834,6 +1882,8 @@ sd_image_t* generate_image_internal(sd_ctx_t* sd_ctx,
     sd_image_t* result_images = (sd_image_t*)calloc(batch_count, sizeof(sd_image_t));
     if (result_images == NULL) {
         ggml_free(work_ctx);
+        if (err)
+            *err = SD_ERR_INTERNAL;
         return NULL;
     }
 
@@ -1871,11 +1921,17 @@ ggml_tensor* generate_init_latent(sd_ctx_t* sd_ctx,
     return init_latent;
 }
 
-sd_image_t* generate_image(sd_ctx_t* sd_ctx, const sd_img_gen_params_t* sd_img_gen_params) {
+sd_image_t* generate_image(sd_ctx_t* sd_ctx, const sd_img_gen_params_t* sd_img_gen_params, sd_err_t* err) {
+    if (err) {
+        *err = SD_OK;
+    }
+    ggml_reset_abort();
     int width  = sd_img_gen_params->width;
     int height = sd_img_gen_params->height;
     LOG_DEBUG("generate_image %dx%d", width, height);
     if (sd_ctx == NULL || sd_img_gen_params == NULL) {
+        if (err)
+            *err = SD_ERR_INVALID_PARAM;
         return NULL;
     }
 
@@ -1900,6 +1956,8 @@ sd_image_t* generate_image(sd_ctx_t* sd_ctx, const sd_img_gen_params_t* sd_img_g
     struct ggml_context* work_ctx = ggml_init(params);
     if (!work_ctx) {
         LOG_ERROR("ggml_init() failed");
+        if (err)
+            *err = SD_ERR_INTERNAL;
         return NULL;
     }
 
@@ -2070,6 +2128,7 @@ sd_image_t* generate_image(sd_ctx_t* sd_ctx, const sd_img_gen_params_t* sd_img_g
                                                         sd_img_gen_params->normalize_input,
                                                         sd_img_gen_params->input_id_images_path,
                                                         ref_latents,
+                                                         err,
                                                         concat_latent,
                                                         denoise_mask);
 
@@ -2080,8 +2139,14 @@ sd_image_t* generate_image(sd_ctx_t* sd_ctx, const sd_img_gen_params_t* sd_img_g
     return result_images;
 }
 
-SD_API sd_image_t* generate_video(sd_ctx_t* sd_ctx, const sd_vid_gen_params_t* sd_vid_gen_params) {
+SD_API sd_image_t* generate_video(sd_ctx_t* sd_ctx, const sd_vid_gen_params_t* sd_vid_gen_params, sd_err_t* err) {
+    if (err) {
+        *err = SD_OK;
+    }
+    ggml_reset_abort();
     if (sd_ctx == NULL || sd_vid_gen_params == NULL) {
+        if (err)
+            *err = SD_ERR_INVALID_PARAM;
         return NULL;
     }
 
@@ -2102,6 +2167,8 @@ SD_API sd_image_t* generate_video(sd_ctx_t* sd_ctx, const sd_vid_gen_params_t* s
     struct ggml_context* work_ctx = ggml_init(params);
     if (!work_ctx) {
         LOG_ERROR("ggml_init() failed");
+        if (err)
+            *err = SD_ERR_INTERNAL;
         return NULL;
     }
 
@@ -2176,12 +2243,20 @@ SD_API sd_image_t* generate_video(sd_ctx_t* sd_ctx, const sd_vid_gen_params_t* s
     }
     if (img == NULL) {
         ggml_free(work_ctx);
+        if (err) {
+            *err = SD_ERR_INTERNAL;
+            if (ggml_is_aborted()) {
+                *err = SD_ERR_GGML_ABORT;
+            }
+        }
         return NULL;
     }
 
     sd_image_t* result_images = (sd_image_t*)calloc(sd_vid_gen_params->video_frames, sizeof(sd_image_t));
     if (result_images == NULL) {
         ggml_free(work_ctx);
+        if (err)
+            *err = SD_ERR_INTERNAL;
         return NULL;
     }
 

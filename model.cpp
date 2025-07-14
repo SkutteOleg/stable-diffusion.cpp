@@ -2245,20 +2245,33 @@ int64_t ModelLoader::get_params_mem_size(ggml_backend_t backend, ggml_type type)
     return mem_size;
 }
 
-bool convert(const char* input_path, const char* vae_path, const char* output_path, sd_type_t output_type, const char* tensor_type_rules) {
+sd_err_t convert(const char* input_path, const char* vae_path, const char* output_path, sd_type_t output_type, const char* tensor_type_rules) {
+    ggml_reset_abort();
     ModelLoader model_loader;
 
     if (!model_loader.init_from_file(input_path)) {
         LOG_ERROR("init model loader from file failed: '%s'", input_path);
-        return false;
+        if (ggml_is_aborted()) {
+            return SD_ERR_GGML_ABORT;
+        }
+        return SD_ERR_MISSING_RESOURCE;
     }
 
     if (vae_path != NULL && strlen(vae_path) > 0) {
         if (!model_loader.init_from_file(vae_path, "vae.")) {
             LOG_ERROR("init model loader from file failed: '%s'", vae_path);
-            return false;
+            if (ggml_is_aborted()) {
+                return SD_ERR_GGML_ABORT;
+            }
+            return SD_ERR_MISSING_RESOURCE;
         }
     }
     bool success = model_loader.save_to_gguf_file(output_path, (ggml_type)output_type, tensor_type_rules);
-    return success;
+    if (success) {
+        return SD_OK;
+    }
+    if (ggml_is_aborted()) {
+        return SD_ERR_GGML_ABORT;
+    }
+    return SD_ERR_INTERNAL;
 }

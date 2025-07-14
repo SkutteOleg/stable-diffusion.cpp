@@ -162,7 +162,7 @@ void threshold_hystersis(struct ggml_tensor* img, float high_threshold, float lo
     }
 }
 
-uint8_t* preprocess_canny(uint8_t* img, int width, int height, float high_threshold, float low_threshold, float weak, float strong, bool inverse) {
+sd_err_t preprocess_canny(uint8_t* img, int width, int height, float high_threshold, float low_threshold, float weak, float strong, bool inverse, uint8_t** out_img) {
     struct ggml_init_params params;
     params.mem_size               = static_cast<size_t>(10 * 1024 * 1024);  // 10
     params.mem_buffer             = NULL;
@@ -171,7 +171,7 @@ uint8_t* preprocess_canny(uint8_t* img, int width, int height, float high_thresh
 
     if (!work_ctx) {
         LOG_ERROR("ggml_init() failed");
-        return NULL;
+        return SD_ERR_INTERNAL;
     }
 
     float kX[9] = {
@@ -219,9 +219,12 @@ uint8_t* preprocess_canny(uint8_t* img, int width, int height, float high_thresh
         }
     }
     free(img);
-    uint8_t* output = sd_tensor_to_image(image);
+    *out_img = sd_tensor_to_image(image);
     ggml_free(work_ctx);
-    return output;
+    if (ggml_is_aborted()) {
+        return SD_ERR_GGML_ABORT;
+    }
+    return SD_OK;
 }
 
 #endif  // __PREPROCESSING_HPP__
