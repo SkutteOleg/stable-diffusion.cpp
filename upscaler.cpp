@@ -104,15 +104,20 @@ struct upscaler_ctx_t {
 };
 
 upscaler_ctx_t* new_upscaler_ctx(const char* esrgan_path_c_str,
-                                 int n_threads) {
+                                 int n_threads,
+                                 sd_err_t* err) {
     upscaler_ctx_t* upscaler_ctx = (upscaler_ctx_t*)malloc(sizeof(upscaler_ctx_t));
     if (upscaler_ctx == NULL) {
+        if (err)
+            *err = SD_ERR_INTERNAL;
         return NULL;
     }
     std::string esrgan_path(esrgan_path_c_str);
 
     upscaler_ctx->upscaler = new UpscalerGGML(n_threads);
     if (upscaler_ctx->upscaler == NULL) {
+        if (err)
+            *err = SD_ERR_INTERNAL;
         return NULL;
     }
 
@@ -120,13 +125,26 @@ upscaler_ctx_t* new_upscaler_ctx(const char* esrgan_path_c_str,
         delete upscaler_ctx->upscaler;
         upscaler_ctx->upscaler = NULL;
         free(upscaler_ctx);
+        if (err)
+            *err = SD_ERR_MISSING_RESOURCE;
         return NULL;
     }
+
+    if (err)
+        *err = SD_OK;
     return upscaler_ctx;
 }
 
-sd_image_t upscale(upscaler_ctx_t* upscaler_ctx, sd_image_t input_image, uint32_t upscale_factor) {
-    return upscaler_ctx->upscaler->upscale(input_image, upscale_factor);
+sd_image_t upscale(upscaler_ctx_t* upscaler_ctx, sd_image_t input_image, uint32_t upscale_factor, sd_err_t* err) {
+    sd_image_t result = upscaler_ctx->upscaler->upscale(input_image, upscale_factor);
+    if (result.data == NULL) {
+        if (err)
+            *err = SD_ERR_INTERNAL;
+    } else {
+        if (err)
+            *err = SD_OK;
+    }
+    return result;
 }
 
 void free_upscaler_ctx(upscaler_ctx_t* upscaler_ctx) {
