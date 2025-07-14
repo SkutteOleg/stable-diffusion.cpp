@@ -205,7 +205,17 @@ void ggml_print_backtrace(void) {
 }
 #endif
 
+//
+// abort
+//
+
+#include <stdlib.h>
+
+static bool g_ggml_abort_called = false;
+
 void ggml_abort(const char * file, int line, const char * fmt, ...) {
+    g_ggml_abort_called = true;
+
     fflush(stdout);
 
     fprintf(stderr, "%s:%d: ", file, line);
@@ -217,8 +227,16 @@ void ggml_abort(const char * file, int line, const char * fmt, ...) {
 
     fprintf(stderr, "\n");
 
-    ggml_print_backtrace();
-    abort();
+    // ggml_print_backtrace();
+    // abort();
+}
+
+bool ggml_is_aborted(void) {
+    return g_ggml_abort_called;
+}
+
+void ggml_reset_abort(void) {
+    g_ggml_abort_called = false;
 }
 
 // ggml_print_backtrace is registered with std::set_terminate by ggml.cpp

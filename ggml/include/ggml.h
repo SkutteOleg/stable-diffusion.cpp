@@ -314,8 +314,13 @@
 extern "C" {
 #endif
 
-    GGML_NORETURN GGML_ATTRIBUTE_FORMAT(3, 4)
     GGML_API void ggml_abort(const char * file, int line, const char * fmt, ...);
+
+    // returns true if an abort has been signaled
+    GGML_API bool ggml_is_aborted(void);
+
+    // resets the abort signal
+    GGML_API void ggml_reset_abort(void);
 
     enum ggml_status {
         GGML_STATUS_ALLOC_FAILED = -2,
