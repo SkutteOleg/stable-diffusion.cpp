@@ -205,6 +205,17 @@ typedef struct {
 
 typedef struct sd_ctx_t sd_ctx_t;
 
+typedef enum {
+    SD_OK = 0,
+    SD_ERR_UNKNOWN = 1,
+    SD_ERR_INVALID_PARAM = 2,
+    SD_ERR_NOT_IMPLEMENTED = 3,
+    SD_ERR_UNSUPPORTED_FORMAT = 4,
+    SD_ERR_MISSING_RESOURCE = 5,
+    SD_ERR_INTERNAL = 6,
+    SD_ERR_GGML_ABORT = 7
+} sd_err_t;
+
 typedef void (*sd_log_cb_t)(enum sd_log_level_t level, const char* text, void* data);
 typedef void (*sd_progress_cb_t)(int step, int steps, float time, void* data);
 
@@ -222,42 +233,44 @@ SD_API enum sample_method_t str_to_sample_method(const char* str);
 SD_API const char* sd_schedule_name(enum schedule_t schedule);
 SD_API enum schedule_t str_to_schedule(const char* str);
 
-SD_API void sd_ctx_params_init(sd_ctx_params_t* sd_ctx_params);
+SD_API sd_err_t sd_ctx_params_init(sd_ctx_params_t* sd_ctx_params);
 SD_API char* sd_ctx_params_to_str(const sd_ctx_params_t* sd_ctx_params);
 
-SD_API sd_ctx_t* new_sd_ctx(const sd_ctx_params_t* sd_ctx_params);
+SD_API sd_ctx_t* new_sd_ctx(const sd_ctx_params_t* sd_ctx_params, sd_err_t* err);
 SD_API void free_sd_ctx(sd_ctx_t* sd_ctx);
 
-SD_API void sd_img_gen_params_init(sd_img_gen_params_t* sd_img_gen_params);
+SD_API sd_err_t sd_img_gen_params_init(sd_img_gen_params_t* sd_img_gen_params);
 SD_API char* sd_img_gen_params_to_str(const sd_img_gen_params_t* sd_img_gen_params);
-SD_API sd_image_t* generate_image(sd_ctx_t* sd_ctx, const sd_img_gen_params_t* sd_img_gen_params);
+SD_API sd_image_t* generate_image(sd_ctx_t* sd_ctx, const sd_img_gen_params_t* sd_img_gen_params, sd_err_t* err);
 
-SD_API void sd_vid_gen_params_init(sd_vid_gen_params_t* sd_vid_gen_params);
-SD_API sd_image_t* generate_video(sd_ctx_t* sd_ctx, const sd_vid_gen_params_t* sd_vid_gen_params);  // broken
+SD_API sd_err_t sd_vid_gen_params_init(sd_vid_gen_params_t* sd_vid_gen_params);
+SD_API sd_image_t* generate_video(sd_ctx_t* sd_ctx, const sd_vid_gen_params_t* sd_vid_gen_params, sd_err_t* err);  // broken
 
 typedef struct upscaler_ctx_t upscaler_ctx_t;
 
 SD_API upscaler_ctx_t* new_upscaler_ctx(const char* esrgan_path,
                                         int n_threads,
-                                        bool direct);
+                                        bool direct,
+                                        sd_err_t* err);
 SD_API void free_upscaler_ctx(upscaler_ctx_t* upscaler_ctx);
 
-SD_API sd_image_t upscale(upscaler_ctx_t* upscaler_ctx, sd_image_t input_image, uint32_t upscale_factor);
+SD_API sd_image_t upscale(upscaler_ctx_t* upscaler_ctx, sd_image_t input_image, uint32_t upscale_factor, sd_err_t* err);
 
-SD_API bool convert(const char* input_path,
-                    const char* vae_path,
-                    const char* output_path,
-                    enum sd_type_t output_type,
-                    const char* tensor_type_rules);
+SD_API sd_err_t convert(const char* input_path,
+                       const char* vae_path,
+                       const char* output_path,
+                       enum sd_type_t output_type,
+                       const char* tensor_type_rules);
 
-SD_API uint8_t* preprocess_canny(uint8_t* img,
+SD_API sd_err_t preprocess_canny(uint8_t* img,
                                  int width,
                                  int height,
                                  float high_threshold,
                                  float low_threshold,
                                  float weak,
                                  float strong,
-                                 bool inverse);
+                                 bool inverse,
+                                 uint8_t** out_img);
 
 #ifdef __cplusplus
 }

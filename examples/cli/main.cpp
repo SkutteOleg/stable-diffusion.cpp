@@ -918,10 +918,11 @@ int main(int argc, const char* argv[]) {
         params.chroma_t5_mask_pad,
     };
 
-    sd_ctx_t* sd_ctx = new_sd_ctx(&sd_ctx_params);
+    sd_err_t err;
+    sd_ctx_t* sd_ctx = new_sd_ctx(&sd_ctx_params, &err);
 
-    if (sd_ctx == NULL) {
-        printf("new_sd_ctx_t failed\n");
+    if (err != SD_OK) {
+        printf("new_sd_ctx_t failed, error code: %d\n", err);
         return 1;
     }
 
@@ -943,14 +944,21 @@ int main(int argc, const char* argv[]) {
                                        3,
                                        control_image_buffer};
         if (params.canny_preprocess) {  // apply preprocessor
-            control_image->data = preprocess_canny(control_image->data,
-                                                   control_image->width,
-                                                   control_image->height,
-                                                   0.08f,
-                                                   0.08f,
-                                                   0.8f,
-                                                   1.0f,
-                                                   false);
+            uint8_t* canny_image_data = NULL;
+            sd_err_t err = preprocess_canny(control_image->data,
+                                            control_image->width,
+                                            control_image->height,
+                                            0.08f,
+                                            0.08f,
+                                            0.8f,
+                                            1.0f,
+                                            false,
+                                            &canny_image_data);
+            if (err != SD_OK) {
+                fprintf(stderr, "canny preprocess failed, error code: %d\n", err);
+                return 1;
+            }
+            control_image->data = canny_image_data;
         }
     }
 
@@ -993,7 +1001,7 @@ int main(int argc, const char* argv[]) {
             params.input_id_images_path.c_str(),
         };
 
-        results              = generate_image(sd_ctx, &img_gen_params);
+        results              = generate_image(sd_ctx, &img_gen_params, &err);
         expected_num_results = params.batch_count;
     } else if (params.mode == VID_GEN) {
         sd_vid_gen_params_t vid_gen_params = {
@@ -1011,7 +1019,7 @@ int main(int argc, const char* argv[]) {
             params.augmentation_level,
         };
 
-        results              = generate_video(sd_ctx, &vid_gen_params);
+        results              = generate_video(sd_ctx, &vid_gen_params, &err);
         expected_num_results = params.video_frames;
     }
 
@@ -1025,10 +1033,11 @@ int main(int argc, const char* argv[]) {
     if (params.esrgan_path.size() > 0 && params.upscale_repeats > 0) {
         upscaler_ctx_t* upscaler_ctx = new_upscaler_ctx(params.esrgan_path.c_str(),
                                                         params.n_threads,
-                                                        params.diffusion_conv_direct);
+                                                        params.diffusion_conv_direct,
+                                                        &err);
 
-        if (upscaler_ctx == NULL) {
-            printf("new_upscaler_ctx failed\n");
+        if (err != SD_OK) {
+            printf("new_upscaler_ctx failed, error code: %d\n", err);
         } else {
             for (int i = 0; i < params.batch_count; i++) {
                 if (results[i].data == NULL) {
@@ -1036,9 +1045,9 @@ int main(int argc, const char* argv[]) {
                 }
                 sd_image_t current_image = results[i];
                 for (int u = 0; u < params.upscale_repeats; ++u) {
-                    sd_image_t upscaled_image = upscale(upscaler_ctx, current_image, upscale_factor);
-                    if (upscaled_image.data == NULL) {
-                        printf("upscale failed\n");
+                    sd_image_t upscaled_image = upscale(upscaler_ctx, current_image, upscale_factor, &err);
+                    if (err != SD_OK) {
+                        printf("upscale failed, error code: %d\n", err);
                         break;
                     }
                     free(current_image.data);

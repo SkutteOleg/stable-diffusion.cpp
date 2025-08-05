@@ -993,12 +993,12 @@ struct SD3CLIPEmbedder : public Conditioner {
                                                                                   int num_input_imgs,
                                                                                   int adm_in_channels        = -1,
                                                                                   bool force_zero_embeddings = false) {
-        GGML_ASSERT(0 && "Not implemented yet!");
+        throw std::runtime_error("Not implemented yet!");
     }
 
     std::string remove_trigger_from_prompt(ggml_context* work_ctx,
                                            const std::string& prompt) {
-        GGML_ASSERT(0 && "Not implemented yet!");
+        throw std::runtime_error("Not implemented yet!");
     }
 };
 
@@ -1214,12 +1214,12 @@ struct FluxCLIPEmbedder : public Conditioner {
                                                                                   int num_input_imgs,
                                                                                   int adm_in_channels        = -1,
                                                                                   bool force_zero_embeddings = false) {
-        GGML_ASSERT(0 && "Not implemented yet!");
+        throw std::runtime_error("Not implemented yet!");
     }
 
     std::string remove_trigger_from_prompt(ggml_context* work_ctx,
                                            const std::string& prompt) {
-        GGML_ASSERT(0 && "Not implemented yet!");
+        throw std::runtime_error("Not implemented yet!");
     }
 };
 
@@ -1416,12 +1416,12 @@ struct PixArtCLIPEmbedder : public Conditioner {
                                                                                   int num_input_imgs,
                                                                                   int adm_in_channels        = -1,
                                                                                   bool force_zero_embeddings = false) {
-        GGML_ASSERT(0 && "Not implemented yet!");
+        throw std::runtime_error("Not implemented yet!");
     }
 
     std::string remove_trigger_from_prompt(ggml_context* work_ctx,
                                            const std::string& prompt) {
-        GGML_ASSERT(0 && "Not implemented yet!");
+        throw std::runtime_error("Not implemented yet!");
     }
 };
 
