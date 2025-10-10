@@ -10,6 +10,7 @@
 #include <string>
 #include <vector>
 
+#include "model.h"
 // #include "preprocessing.hpp"
 #include "stable-diffusion.h"
 
@@ -1161,21 +1162,69 @@ int main(int argc, const char* argv[]) {
     }
 
     if (params.mode == CONVERT) {
-        bool success = convert(params.model_path.c_str(), params.vae_path.c_str(), params.output_path.c_str(), params.wtype, params.tensor_type_rules.c_str());
-        if (!success) {
-            fprintf(stderr,
-                    "convert '%s'/'%s' to '%s' failed\n",
-                    params.model_path.c_str(),
-                    params.vae_path.c_str(),
-                    params.output_path.c_str());
-            return 1;
-        } else {
-            printf("convert '%s'/'%s' to '%s' success\n",
-                   params.model_path.c_str(),
-                   params.vae_path.c_str(),
-                   params.output_path.c_str());
-            return 0;
+        ModelLoader model_loader;
+        if (params.model_path.size() > 0) {
+            if (!model_loader.init_from_file(params.model_path)) {
+                fprintf(stderr, "init model loader from file failed: '%s'", params.model_path.c_str());
+                return 1;
+            }
         }
+
+        if (params.diffusion_model_path.size() > 0) {
+            if (!model_loader.init_from_file(params.diffusion_model_path, "model.diffusion_model.")) {
+                fprintf(stderr, "init model loader from file failed: '%s'", params.diffusion_model_path.c_str());
+                return 1;
+            }
+        }
+
+        if (params.high_noise_diffusion_model_path.size() > 0) {
+            if (!model_loader.init_from_file(params.high_noise_diffusion_model_path, "model.high_noise_diffusion_model.")) {
+                fprintf(stderr, "init model loader from file failed: '%s'", params.high_noise_diffusion_model_path.c_str());
+                return 1;
+            }
+        }
+
+        bool is_unet = model_loader.model_is_unet();
+
+        if (params.clip_l_path.size() > 0) {
+            std::string prefix = is_unet ? "cond_stage_model.transformer." : "text_encoders.clip_l.transformer.";
+            if (!model_loader.init_from_file(params.clip_l_path, prefix)) {
+                fprintf(stderr, "init model loader from file failed: '%s'", params.clip_l_path.c_str());
+                return 1;
+            }
+        }
+
+        if (params.clip_g_path.size() > 0) {
+            std::string prefix = is_unet ? "cond_stage_model.1.transformer." : "text_encoders.clip_g.transformer.";
+            if (!model_loader.init_from_file(params.clip_g_path, prefix)) {
+                fprintf(stderr, "init model loader from file failed: '%s'", params.clip_g_path.c_str());
+                return 1;
+            }
+        }
+
+        if (params.clip_vision_path.size() > 0) {
+            if (!model_loader.init_from_file(params.clip_vision_path, "cond_stage_model.transformer.")) {
+                fprintf(stderr, "init model loader from file failed: '%s'", params.clip_vision_path.c_str());
+                return 1;
+            }
+        }
+
+        if (params.t5xxl_path.size() > 0) {
+            if (!model_loader.init_from_file(params.t5xxl_path, "text_encoders.t5xxl.transformer.")) {
+                fprintf(stderr, "init model loader from file failed: '%s'", params.t5xxl_path.c_str());
+                return 1;
+            }
+        }
+
+        if (params.vae_path.size() > 0) {
+            if (!model_loader.init_from_file(params.vae_path, "vae.")) {
+                fprintf(stderr, "init model loader from file failed: '%s'", params.vae_path.c_str());
+                return 1;
+            }
+        }
+        model_loader.save_to_gguf(params.output_path, params.tensor_type_rules.c_str(), (ggml_type)params.wtype, params.n_threads);
+        printf("convert model to '%s' success\n",
+               params.output_path.c_str());
     }
 
     bool vae_decode_only     = true;

@@ -257,8 +257,10 @@ SD_API enum scheduler_t str_to_schedule(const char* str);
 SD_API void sd_ctx_params_init(sd_ctx_params_t* sd_ctx_params);
 SD_API char* sd_ctx_params_to_str(const sd_ctx_params_t* sd_ctx_params);
 
-SD_API sd_ctx_t* new_sd_ctx(const sd_ctx_params_t* sd_ctx_params);
+SD_API sd_ctx_t* new_sd_ctx(const sd_ctx_params_t* sd_ctx_params, bool skip_init = false);
 SD_API void free_sd_ctx(sd_ctx_t* sd_ctx);
+
+SD_API bool sd_model_save_as_gguf(sd_ctx_t* sd_ctx, const char* file_path, const char* tensor_type_rules, sd_type_t new_type);
 SD_API enum sample_method_t sd_get_default_sample_method(const sd_ctx_t* sd_ctx);
 
 SD_API void sd_sample_params_init(sd_sample_params_t* sample_params);
@@ -283,11 +285,6 @@ SD_API sd_image_t upscale(upscaler_ctx_t* upscaler_ctx,
                           sd_image_t input_image,
                           uint32_t upscale_factor);
 
-SD_API bool convert(const char* input_path,
-                    const char* vae_path,
-                    const char* output_path,
-                    enum sd_type_t output_type,
-                    const char* tensor_type_rules);
 
 SD_API bool preprocess_canny(sd_image_t image,
                              float high_threshold,

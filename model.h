@@ -10,6 +10,7 @@
 #include <tuple>
 #include <vector>
 
+#include "stable-diffusion.h"
 #include "ggml-backend.h"
 #include "ggml.h"
 #include "gguf.h"
@@ -225,7 +226,7 @@ typedef std::function<bool(const TensorStorage&, ggml_tensor**)> on_new_tensor_c
 
 typedef std::map<std::string, enum ggml_type> String2GGMLType;
 
-class ModelLoader {
+class SD_API ModelLoader {
 protected:
     std::vector<std::string> file_paths_;
     std::vector<TensorStorage> tensor_storages;
@@ -258,7 +259,7 @@ public:
                       std::set<std::string> ignore_tensors = {},
                       int n_threads                        = 0);
 
-    bool save_to_gguf_file(const std::string& file_path, ggml_type type, const std::string& tensor_type_rules);
+    void save_to_gguf(const std::string& file_path, const char* tensor_type_rules_str, ggml_type new_type, int n_threads);
     bool tensor_should_be_converted(const TensorStorage& tensor_storage, ggml_type type);
     int64_t get_params_mem_size(ggml_backend_t backend, ggml_type type = GGML_TYPE_COUNT);
     ~ModelLoader() = default;
