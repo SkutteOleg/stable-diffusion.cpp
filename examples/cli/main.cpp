@@ -10,6 +10,7 @@
 #include <string>
 #include <vector>
 
+#include "model.h"
 // #include "preprocessing.hpp"
 #include "stable-diffusion.h"
 
@@ -67,6 +68,14 @@ struct SDParams {
     std::string control_net_path;
     std::string embedding_dir;
     sd_type_t wtype = SD_TYPE_COUNT;
+    std::string model_type_str;
+    std::string clip_l_type_str;
+    std::string clip_g_type_str;
+    std::string clip_vision_type_str;
+    std::string t5xxl_type_str;
+    std::string diffusion_model_type_str;
+    std::string high_noise_diffusion_model_type_str;
+    std::string vae_type_str;
     std::string tensor_type_rules;
     std::string lora_model_dir;
     std::string output_path = "output.png";
@@ -140,13 +149,21 @@ void print_params(SDParams params) {
     printf("    mode:                              %s\n", modes_str[params.mode]);
     printf("    model_path:                        %s\n", params.model_path.c_str());
     printf("    wtype:                             %s\n", params.wtype < SD_TYPE_COUNT ? sd_type_name(params.wtype) : "unspecified");
+    printf("    model_type:                        %s\n", params.model_type_str.c_str());
     printf("    clip_l_path:                       %s\n", params.clip_l_path.c_str());
     printf("    clip_g_path:                       %s\n", params.clip_g_path.c_str());
     printf("    clip_vision_path:                  %s\n", params.clip_vision_path.c_str());
+    printf("    clip_l_type:                       %s\n", params.clip_l_type_str.c_str());
+    printf("    clip_g_type:                       %s\n", params.clip_g_type_str.c_str());
+    printf("    clip_vision_type:                  %s\n", params.clip_vision_type_str.c_str());
     printf("    t5xxl_path:                        %s\n", params.t5xxl_path.c_str());
+    printf("    t5xxl_type:                        %s\n", params.t5xxl_type_str.c_str());
     printf("    diffusion_model_path:              %s\n", params.diffusion_model_path.c_str());
+    printf("    diffusion_model_type:              %s\n", params.diffusion_model_type_str.c_str());
     printf("    high_noise_diffusion_model_path:   %s\n", params.high_noise_diffusion_model_path.c_str());
+    printf("    high_noise_diffusion_model_type:   %s\n", params.high_noise_diffusion_model_type_str.c_str());
     printf("    vae_path:                          %s\n", params.vae_path.c_str());
+    printf("    vae_type:                          %s\n", params.vae_type_str.c_str());
     printf("    taesd_path:                        %s\n", params.taesd_path.c_str());
     printf("    esrgan_path:                       %s\n", params.esrgan_path.c_str());
     printf("    control_net_path:                  %s\n", params.control_net_path.c_str());
@@ -209,13 +226,21 @@ void print_usage(int argc, const char* argv[]) {
     printf("                                     If threads <= 0, then threads will be set to the number of CPU physical cores\n");
     printf("  --offload-to-cpu                   place the weights in RAM to save VRAM, and automatically load them into VRAM when needed\n");
     printf("  -m, --model [MODEL]                path to full model\n");
+    printf("  --model-type [TYPE]                weight type for model\n");
     printf("  --diffusion-model                  path to the standalone diffusion model\n");
+    printf("  --diffusion-model-type [TYPE]      weight type for diffusion model\n");
     printf("  --high-noise-diffusion-model       path to the standalone high noise diffusion model\n");
+    printf("  --high-noise-diffusion-model-type [TYPE] weight type for high noise diffusion model\n");
     printf("  --clip_l                           path to the clip-l text encoder\n");
+    printf("  --clip-l-type [TYPE]               weight type for clip-l model\n");
     printf("  --clip_g                           path to the clip-g text encoder\n");
+    printf("  --clip-g-type [TYPE]               weight type for clip-g model\n");
     printf("  --clip_vision                      path to the clip-vision encoder\n");
+    printf("  --clip-vision-type [TYPE]          weight type for clip-vision model\n");
     printf("  --t5xxl                            path to the t5xxl text encoder\n");
+    printf("  --t5xxl-type [TYPE]                weight type for t5xxl model\n");
     printf("  --vae [VAE]                        path to vae\n");
+    printf("  --vae-type [TYPE]                  weight type for vae model\n");
     printf("  --taesd [TAESD_PATH]               path to taesd. Using Tiny AutoEncoder for fast decoding (low quality)\n");
     printf("  --control-net [CONTROL_PATH]       path to control net model\n");
     printf("  --embd-dir [EMBEDDING_PATH]        path to embeddings\n");
@@ -223,7 +248,9 @@ void print_usage(int argc, const char* argv[]) {
     printf("  --upscale-repeats                  Run the ESRGAN upscaler this many times (default 1)\n");
     printf("  --type [TYPE]                      weight type (examples: f32, f16, q4_0, q4_1, q5_0, q5_1, q8_0, q2_K, q3_K, q4_K)\n");
     printf("                                     If not specified, the default is the type of the weight file\n");
+    printf("                                     The --xxx-type options have a higher priority than this option.\n");
     printf("  --tensor-type-rules [EXPRESSION]   weight type per tensor pattern (example: \"^vae\\.=f16,model\\.=q8_0\")\n");
+    printf("                                     This option has a higher priority than the --xxx-type options.\n");
     printf("  --lora-model-dir [DIR]             lora model directory\n");
     printf("  -i, --init-img [IMAGE]             path to the init image, required by img2img\n");
     printf("  --mask [MASK]                      path to the mask image, required by img2img with mask\n");
@@ -480,13 +507,21 @@ void parse_args(int argc, const char** argv, SDParams& params) {
     ArgOptions options;
     options.string_options = {
         {"-m", "--model", "", &params.model_path},
+        {"", "--model-type", "", &params.model_type_str},
         {"", "--clip_l", "", &params.clip_l_path},
+        {"", "--clip-l-type", "", &params.clip_l_type_str},
         {"", "--clip_g", "", &params.clip_g_path},
+        {"", "--clip-g-type", "", &params.clip_g_type_str},
         {"", "--clip_vision", "", &params.clip_vision_path},
+        {"", "--clip-vision-type", "", &params.clip_vision_type_str},
         {"", "--t5xxl", "", &params.t5xxl_path},
+        {"", "--t5xxl-type", "", &params.t5xxl_type_str},
         {"", "--diffusion-model", "", &params.diffusion_model_path},
+        {"", "--diffusion-model-type", "", &params.diffusion_model_type_str},
         {"", "--high-noise-diffusion-model", "", &params.high_noise_diffusion_model_path},
+        {"", "--high-noise-diffusion-model-type", "", &params.high_noise_diffusion_model_type_str},
         {"", "--vae", "", &params.vae_path},
+        {"", "--vae-type", "", &params.vae_type_str},
         {"", "--taesd", "", &params.taesd_path},
         {"", "--control-net", "", &params.control_net_path},
         {"", "--embd-dir", "", &params.embedding_dir},
@@ -1161,21 +1196,92 @@ int main(int argc, const char* argv[]) {
     }
 
     if (params.mode == CONVERT) {
-        bool success = convert(params.model_path.c_str(), params.vae_path.c_str(), params.output_path.c_str(), params.wtype, params.tensor_type_rules.c_str());
-        if (!success) {
-            fprintf(stderr,
-                    "convert '%s'/'%s' to '%s' failed\n",
-                    params.model_path.c_str(),
-                    params.vae_path.c_str(),
-                    params.output_path.c_str());
-            return 1;
-        } else {
-            printf("convert '%s'/'%s' to '%s' success\n",
-                   params.model_path.c_str(),
-                   params.vae_path.c_str(),
-                   params.output_path.c_str());
-            return 0;
+        ModelLoader model_loader;
+        if (params.model_path.size() > 0) {
+            if (!model_loader.init_from_file(params.model_path)) {
+                fprintf(stderr, "init model loader from file failed: '%s'", params.model_path.c_str());
+                return 1;
+            }
         }
+
+        if (params.diffusion_model_path.size() > 0) {
+            if (!model_loader.init_from_file(params.diffusion_model_path, "model.diffusion_model.")) {
+                fprintf(stderr, "init model loader from file failed: '%s'", params.diffusion_model_path.c_str());
+                return 1;
+            }
+        }
+
+        if (params.high_noise_diffusion_model_path.size() > 0) {
+            if (!model_loader.init_from_file(params.high_noise_diffusion_model_path, "model.high_noise_diffusion_model.")) {
+                fprintf(stderr, "init model loader from file failed: '%s'", params.high_noise_diffusion_model_path.c_str());
+                return 1;
+            }
+        }
+
+        bool is_unet = model_loader.model_is_unet();
+
+        if (params.clip_l_path.size() > 0) {
+            std::string prefix = is_unet ? "cond_stage_model.transformer." : "text_encoders.clip_l.transformer.";
+            if (!model_loader.init_from_file(params.clip_l_path, prefix)) {
+                fprintf(stderr, "init model loader from file failed: '%s'", params.clip_l_path.c_str());
+                return 1;
+            }
+        }
+
+        if (params.clip_g_path.size() > 0) {
+            std::string prefix = is_unet ? "cond_stage_model.1.transformer." : "text_encoders.clip_g.transformer.";
+            if (!model_loader.init_from_file(params.clip_g_path, prefix)) {
+                fprintf(stderr, "init model loader from file failed: '%s'", params.clip_g_path.c_str());
+                return 1;
+            }
+        }
+
+        if (params.clip_vision_path.size() > 0) {
+            if (!model_loader.init_from_file(params.clip_vision_path, "cond_stage_model.transformer.")) {
+                fprintf(stderr, "init model loader from file failed: '%s'", params.clip_vision_path.c_str());
+                return 1;
+            }
+        }
+
+        if (params.t5xxl_path.size() > 0) {
+            if (!model_loader.init_from_file(params.t5xxl_path, "text_encoders.t5xxl.transformer.")) {
+                fprintf(stderr, "init model loader from file failed: '%s'", params.t5xxl_path.c_str());
+                return 1;
+            }
+        }
+
+        if (params.vae_path.size() > 0) {
+            if (!model_loader.init_from_file(params.vae_path, "vae.")) {
+                fprintf(stderr, "init model loader from file failed: '%s'", params.vae_path.c_str());
+                return 1;
+            }
+        }
+        std::map<std::string, ggml_type> file_to_wtype;
+        auto add_wtype = [&](const std::string& path, const std::string& type_str) {
+            if (path.size() > 0 && type_str.size() > 0) {
+                sd_type_t wtype = str_to_sd_type(type_str.c_str());
+                if (wtype == SD_TYPE_COUNT) {
+                    fprintf(stderr, "error: invalid weight format %s for %s\n",
+                            type_str.c_str(), path.c_str());
+                    exit(1);
+                }
+                file_to_wtype[path] = (ggml_type)wtype;
+            }
+        };
+
+        add_wtype(params.model_path, params.model_type_str);
+        add_wtype(params.clip_l_path, params.clip_l_type_str);
+        add_wtype(params.clip_g_path, params.clip_g_type_str);
+        add_wtype(params.clip_vision_path, params.clip_vision_type_str);
+        add_wtype(params.t5xxl_path, params.t5xxl_type_str);
+        add_wtype(params.diffusion_model_path, params.diffusion_model_type_str);
+        add_wtype(params.high_noise_diffusion_model_path, params.high_noise_diffusion_model_type_str);
+        add_wtype(params.vae_path, params.vae_type_str);
+
+        model_loader.save_to_gguf(params.output_path, params.tensor_type_rules.c_str(), file_to_wtype, (ggml_type)params.wtype, params.n_threads);
+        printf("convert model to '%s' success\n",
+               params.output_path.c_str());
+        return 0;
     }
 
     bool vae_decode_only     = true;

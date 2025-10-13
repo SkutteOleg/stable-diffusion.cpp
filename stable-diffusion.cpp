@@ -118,6 +118,7 @@ public:
     bool is_using_v_parameterization     = false;
     bool is_using_edm_v_parameterization = false;
 
+    std::shared_ptr<ModelLoader> model_loader;
     std::map<std::string, struct ggml_tensor*> tensors;
 
     std::string lora_model_dir;
@@ -197,35 +198,35 @@ public:
 
         init_backend();
 
-        ModelLoader model_loader;
+        model_loader = std::make_shared<ModelLoader>();
 
         if (strlen(SAFE_STR(sd_ctx_params->model_path)) > 0) {
             LOG_INFO("loading model from '%s'", sd_ctx_params->model_path);
-            if (!model_loader.init_from_file(sd_ctx_params->model_path)) {
+            if (!model_loader->init_from_file(sd_ctx_params->model_path)) {
                 LOG_ERROR("init model loader from file failed: '%s'", sd_ctx_params->model_path);
             }
         }
 
         if (strlen(SAFE_STR(sd_ctx_params->diffusion_model_path)) > 0) {
             LOG_INFO("loading diffusion model from '%s'", sd_ctx_params->diffusion_model_path);
-            if (!model_loader.init_from_file(sd_ctx_params->diffusion_model_path, "model.diffusion_model.")) {
+            if (!model_loader->init_from_file(sd_ctx_params->diffusion_model_path, "model.diffusion_model.")) {
                 LOG_WARN("loading diffusion model from '%s' failed", sd_ctx_params->diffusion_model_path);
             }
         }
 
         if (strlen(SAFE_STR(sd_ctx_params->high_noise_diffusion_model_path)) > 0) {
             LOG_INFO("loading high noise diffusion model from '%s'", sd_ctx_params->high_noise_diffusion_model_path);
-            if (!model_loader.init_from_file(sd_ctx_params->high_noise_diffusion_model_path, "model.high_noise_diffusion_model.")) {
+            if (!model_loader->init_from_file(sd_ctx_params->high_noise_diffusion_model_path, "model.high_noise_diffusion_model.")) {
                 LOG_WARN("loading diffusion model from '%s' failed", sd_ctx_params->high_noise_diffusion_model_path);
             }
         }
 
-        bool is_unet = model_loader.model_is_unet();
+        bool is_unet = model_loader->model_is_unet();
 
         if (strlen(SAFE_STR(sd_ctx_params->clip_l_path)) > 0) {
             LOG_INFO("loading clip_l from '%s'", sd_ctx_params->clip_l_path);
             std::string prefix = is_unet ? "cond_stage_model.transformer." : "text_encoders.clip_l.transformer.";
-            if (!model_loader.init_from_file(sd_ctx_params->clip_l_path, prefix)) {
+            if (!model_loader->init_from_file(sd_ctx_params->clip_l_path, prefix)) {
                 LOG_WARN("loading clip_l from '%s' failed", sd_ctx_params->clip_l_path);
             }
         }
@@ -233,7 +234,7 @@ public:
         if (strlen(SAFE_STR(sd_ctx_params->clip_g_path)) > 0) {
             LOG_INFO("loading clip_g from '%s'", sd_ctx_params->clip_g_path);
             std::string prefix = is_unet ? "cond_stage_model.1.transformer." : "text_encoders.clip_g.transformer.";
-            if (!model_loader.init_from_file(sd_ctx_params->clip_g_path, prefix)) {
+            if (!model_loader->init_from_file(sd_ctx_params->clip_g_path, prefix)) {
                 LOG_WARN("loading clip_g from '%s' failed", sd_ctx_params->clip_g_path);
             }
         }
@@ -241,26 +242,26 @@ public:
         if (strlen(SAFE_STR(sd_ctx_params->clip_vision_path)) > 0) {
             LOG_INFO("loading clip_vision from '%s'", sd_ctx_params->clip_vision_path);
             std::string prefix = "cond_stage_model.transformer.";
-            if (!model_loader.init_from_file(sd_ctx_params->clip_vision_path, prefix)) {
+            if (!model_loader->init_from_file(sd_ctx_params->clip_vision_path, prefix)) {
                 LOG_WARN("loading clip_vision from '%s' failed", sd_ctx_params->clip_vision_path);
             }
         }
 
         if (strlen(SAFE_STR(sd_ctx_params->t5xxl_path)) > 0) {
             LOG_INFO("loading t5xxl from '%s'", sd_ctx_params->t5xxl_path);
-            if (!model_loader.init_from_file(sd_ctx_params->t5xxl_path, "text_encoders.t5xxl.transformer.")) {
+            if (!model_loader->init_from_file(sd_ctx_params->t5xxl_path, "text_encoders.t5xxl.transformer.")) {
                 LOG_WARN("loading t5xxl from '%s' failed", sd_ctx_params->t5xxl_path);
             }
         }
 
         if (strlen(SAFE_STR(sd_ctx_params->vae_path)) > 0) {
             LOG_INFO("loading vae from '%s'", sd_ctx_params->vae_path);
-            if (!model_loader.init_from_file(sd_ctx_params->vae_path, "vae.")) {
+            if (!model_loader->init_from_file(sd_ctx_params->vae_path, "vae.")) {
                 LOG_WARN("loading vae from '%s' failed", sd_ctx_params->vae_path);
             }
         }
 
-        version = model_loader.get_sd_version();
+        version = model_loader->get_sd_version();
         if (version == VERSION_COUNT) {
             LOG_ERROR("get sd version from file failed: '%s'", SAFE_STR(sd_ctx_params->model_path));
             return false;
@@ -271,20 +272,20 @@ public:
                               ? (ggml_type)sd_ctx_params->wtype
                               : GGML_TYPE_COUNT;
         if (wtype == GGML_TYPE_COUNT) {
-            model_wtype = model_loader.get_sd_wtype();
+            model_wtype = model_loader->get_sd_wtype();
             if (model_wtype == GGML_TYPE_COUNT) {
                 model_wtype = GGML_TYPE_F32;
                 LOG_WARN("can not get mode wtype frome weight, use f32");
             }
-            conditioner_wtype = model_loader.get_conditioner_wtype();
+            conditioner_wtype = model_loader->get_conditioner_wtype();
             if (conditioner_wtype == GGML_TYPE_COUNT) {
                 conditioner_wtype = wtype;
             }
-            diffusion_model_wtype = model_loader.get_diffusion_model_wtype();
+            diffusion_model_wtype = model_loader->get_diffusion_model_wtype();
             if (diffusion_model_wtype == GGML_TYPE_COUNT) {
                 diffusion_model_wtype = wtype;
             }
-            vae_wtype = model_loader.get_vae_wtype();
+            vae_wtype = model_loader->get_vae_wtype();
 
             if (vae_wtype == GGML_TYPE_COUNT) {
                 vae_wtype = wtype;
@@ -294,7 +295,7 @@ public:
             conditioner_wtype     = wtype;
             diffusion_model_wtype = wtype;
             vae_wtype             = wtype;
-            model_loader.set_wtype_override(wtype);
+            model_loader->set_wtype_override(wtype);
         }
 
         LOG_INFO("Weight type:                 %s", ggml_type_name(model_wtype));
@@ -351,14 +352,14 @@ public:
             if (sd_version_is_sd3(version)) {
                 cond_stage_model = std::make_shared<SD3CLIPEmbedder>(clip_backend,
                                                                      offload_params_to_cpu,
-                                                                     model_loader.tensor_storages_types);
+                                                                     model_loader->tensor_storages_types);
                 diffusion_model  = std::make_shared<MMDiTModel>(backend,
                                                                offload_params_to_cpu,
                                                                sd_ctx_params->diffusion_flash_attn,
-                                                               model_loader.tensor_storages_types);
+                                                               model_loader->tensor_storages_types);
             } else if (sd_version_is_flux(version)) {
                 bool is_chroma = false;
-                for (auto pair : model_loader.tensor_storages_types) {
+                for (auto pair : model_loader->tensor_storages_types) {
                     if (pair.first.find("distilled_guidance_layer.in_proj.weight") != std::string::npos) {
                         is_chroma = true;
                         break;
@@ -376,37 +377,37 @@ public:
 
                     cond_stage_model = std::make_shared<T5CLIPEmbedder>(clip_backend,
                                                                         offload_params_to_cpu,
-                                                                        model_loader.tensor_storages_types,
+                                                                        model_loader->tensor_storages_types,
                                                                         sd_ctx_params->chroma_use_t5_mask,
                                                                         sd_ctx_params->chroma_t5_mask_pad);
                 } else {
                     cond_stage_model = std::make_shared<FluxCLIPEmbedder>(clip_backend,
                                                                           offload_params_to_cpu,
-                                                                          model_loader.tensor_storages_types);
+                                                                          model_loader->tensor_storages_types);
                 }
                 diffusion_model = std::make_shared<FluxModel>(backend,
                                                               offload_params_to_cpu,
-                                                              model_loader.tensor_storages_types,
+                                                              model_loader->tensor_storages_types,
                                                               version,
                                                               sd_ctx_params->diffusion_flash_attn,
                                                               sd_ctx_params->chroma_use_dit_mask);
             } else if (sd_version_is_wan(version)) {
                 cond_stage_model = std::make_shared<T5CLIPEmbedder>(clip_backend,
                                                                     offload_params_to_cpu,
-                                                                    model_loader.tensor_storages_types,
+                                                                    model_loader->tensor_storages_types,
                                                                     true,
                                                                     1,
                                                                     true);
                 diffusion_model  = std::make_shared<WanModel>(backend,
                                                              offload_params_to_cpu,
-                                                             model_loader.tensor_storages_types,
+                                                             model_loader->tensor_storages_types,
                                                              "model.diffusion_model",
                                                              version,
                                                              sd_ctx_params->diffusion_flash_attn);
                 if (strlen(SAFE_STR(sd_ctx_params->high_noise_diffusion_model_path)) > 0) {
                     high_noise_diffusion_model = std::make_shared<WanModel>(backend,
                                                                             offload_params_to_cpu,
-                                                                            model_loader.tensor_storages_types,
+                                                                            model_loader->tensor_storages_types,
                                                                             "model.high_noise_diffusion_model",
                                                                             version,
                                                                             sd_ctx_params->diffusion_flash_attn);
@@ -414,7 +415,7 @@ public:
                 if (diffusion_model->get_desc() == "Wan2.1-I2V-14B" || diffusion_model->get_desc() == "Wan2.1-FLF2V-14B") {
                     clip_vision = std::make_shared<FrozenCLIPVisionEmbedder>(backend,
                                                                              offload_params_to_cpu,
-                                                                             model_loader.tensor_storages_types);
+                                                                             model_loader->tensor_storages_types);
                     clip_vision->alloc_params_buffer();
                     clip_vision->get_param_tensors(tensors);
                 }
@@ -422,20 +423,20 @@ public:
                 if (strstr(SAFE_STR(sd_ctx_params->photo_maker_path), "v2")) {
                     cond_stage_model = std::make_shared<FrozenCLIPEmbedderWithCustomWords>(clip_backend,
                                                                                            offload_params_to_cpu,
-                                                                                           model_loader.tensor_storages_types,
+                                                                                           model_loader->tensor_storages_types,
                                                                                            SAFE_STR(sd_ctx_params->embedding_dir),
                                                                                            version,
                                                                                            PM_VERSION_2);
                 } else {
                     cond_stage_model = std::make_shared<FrozenCLIPEmbedderWithCustomWords>(clip_backend,
                                                                                            offload_params_to_cpu,
-                                                                                           model_loader.tensor_storages_types,
+                                                                                           model_loader->tensor_storages_types,
                                                                                            SAFE_STR(sd_ctx_params->embedding_dir),
                                                                                            version);
                 }
                 diffusion_model = std::make_shared<UNetModel>(backend,
                                                               offload_params_to_cpu,
-                                                              model_loader.tensor_storages_types,
+                                                              model_loader->tensor_storages_types,
                                                               version,
                                                               sd_ctx_params->diffusion_flash_attn);
                 if (sd_ctx_params->diffusion_conv_direct) {
@@ -469,7 +470,7 @@ public:
             if (sd_version_is_wan(version)) {
                 first_stage_model = std::make_shared<WAN::WanVAERunner>(vae_backend,
                                                                         offload_params_to_cpu,
-                                                                        model_loader.tensor_storages_types,
+                                                                        model_loader->tensor_storages_types,
                                                                         "first_stage_model",
                                                                         vae_decode_only,
                                                                         version);
@@ -478,7 +479,7 @@ public:
             } else if (!use_tiny_autoencoder) {
                 first_stage_model = std::make_shared<AutoEncoderKL>(vae_backend,
                                                                     offload_params_to_cpu,
-                                                                    model_loader.tensor_storages_types,
+                                                                    model_loader->tensor_storages_types,
                                                                     "first_stage_model",
                                                                     vae_decode_only,
                                                                     false,
@@ -492,7 +493,7 @@ public:
             } else {
                 tae_first_stage = std::make_shared<TinyAutoEncoder>(vae_backend,
                                                                     offload_params_to_cpu,
-                                                                    model_loader.tensor_storages_types,
+                                                                    model_loader->tensor_storages_types,
                                                                     "decoder.layers",
                                                                     vae_decode_only,
                                                                     version);
@@ -513,7 +514,7 @@ public:
                 }
                 control_net = std::make_shared<ControlNet>(controlnet_backend,
                                                            offload_params_to_cpu,
-                                                           model_loader.tensor_storages_types,
+                                                           model_loader->tensor_storages_types,
                                                            version);
                 if (sd_ctx_params->diffusion_conv_direct) {
                     LOG_INFO("Using Conv2d direct in the control net");
@@ -524,7 +525,7 @@ public:
             if (strstr(SAFE_STR(sd_ctx_params->photo_maker_path), "v2")) {
                 pmid_model = std::make_shared<PhotoMakerIDEncoder>(backend,
                                                                    offload_params_to_cpu,
-                                                                   model_loader.tensor_storages_types,
+                                                                   model_loader->tensor_storages_types,
                                                                    "pmid",
                                                                    version,
                                                                    PM_VERSION_2);
@@ -532,7 +533,7 @@ public:
             } else {
                 pmid_model = std::make_shared<PhotoMakerIDEncoder>(backend,
                                                                    offload_params_to_cpu,
-                                                                   model_loader.tensor_storages_types,
+                                                                   model_loader->tensor_storages_types,
                                                                    "pmid",
                                                                    version);
             }
@@ -543,7 +544,7 @@ public:
                     return false;
                 }
                 LOG_INFO("loading stacked ID embedding (PHOTOMAKER) model file from '%s'", sd_ctx_params->photo_maker_path);
-                if (!model_loader.init_from_file(sd_ctx_params->photo_maker_path, "pmid.")) {
+                if (!model_loader->init_from_file(sd_ctx_params->photo_maker_path, "pmid.")) {
                     LOG_WARN("loading stacked ID embedding from '%s' failed", sd_ctx_params->photo_maker_path);
                 } else {
                     stacked_id = true;
@@ -587,7 +588,7 @@ public:
         if (version == VERSION_SVD) {
             ignore_tensors.insert("conditioner.embedders.3");
         }
-        bool success = model_loader.load_tensors(tensors, ignore_tensors, n_threads);
+        bool success = model_loader->load_tensors(tensors, ignore_tensors, n_threads);
         if (!success) {
             LOG_ERROR("load tensors from model loader failed");
             ggml_free(ctx);
@@ -674,12 +675,12 @@ public:
                 is_using_v_parameterization = true;
             }
         } else if (sd_version_is_sdxl(version)) {
-            if (model_loader.tensor_storages_types.find("edm_vpred.sigma_max") != model_loader.tensor_storages_types.end()) {
+            if (model_loader->tensor_storages_types.find("edm_vpred.sigma_max") != model_loader->tensor_storages_types.end()) {
                 // CosXL models
                 // TODO: get sigma_min and sigma_max values from file
                 is_using_edm_v_parameterization = true;
             }
-            if (model_loader.tensor_storages_types.find("v_pred") != model_loader.tensor_storages_types.end()) {
+            if (model_loader->tensor_storages_types.find("v_pred") != model_loader->tensor_storages_types.end()) {
                 is_using_v_parameterization = true;
             }
         } else if (version == VERSION_SVD) {
@@ -697,7 +698,7 @@ public:
         } else if (sd_version_is_flux(version)) {
             LOG_INFO("running in Flux FLOW mode");
             float shift = 1.0f;  // TODO: validate
-            for (auto pair : model_loader.tensor_storages_types) {
+            for (auto pair : model_loader->tensor_storages_types) {
                 if (pair.first.find("model.diffusion_model.guidance_in.in_layer.weight") != std::string::npos) {
                     shift = 1.15f;
                     break;
@@ -1698,7 +1699,6 @@ char* sd_ctx_params_to_str(const sd_ctx_params_t* sd_ctx_params) {
              "embedding_dir: %s\n"
              "photo_maker_path: %s\n"
              "vae_decode_only: %s\n"
-             "vae_tiling: %s\n"
              "free_params_immediately: %s\n"
              "n_threads: %d\n"
              "wtype: %s\n"
@@ -1866,7 +1866,7 @@ struct sd_ctx_t {
     StableDiffusionGGML* sd = NULL;
 };
 
-sd_ctx_t* new_sd_ctx(const sd_ctx_params_t* sd_ctx_params) {
+sd_ctx_t* new_sd_ctx(const sd_ctx_params_t* sd_ctx_params, bool skip_init) {
     sd_ctx_t* sd_ctx = (sd_ctx_t*)malloc(sizeof(sd_ctx_t));
     if (sd_ctx == NULL) {
         return NULL;
@@ -1878,11 +1878,13 @@ sd_ctx_t* new_sd_ctx(const sd_ctx_params_t* sd_ctx_params) {
         return NULL;
     }
 
-    if (!sd_ctx->sd->init(sd_ctx_params)) {
-        delete sd_ctx->sd;
-        sd_ctx->sd = NULL;
-        free(sd_ctx);
-        return NULL;
+    if (!skip_init) {
+        if (!sd_ctx->sd->init(sd_ctx_params)) {
+            delete sd_ctx->sd;
+            sd_ctx->sd = NULL;
+            free(sd_ctx);
+            return NULL;
+        }
     }
     return sd_ctx;
 }
@@ -1893,6 +1895,15 @@ void free_sd_ctx(sd_ctx_t* sd_ctx) {
         sd_ctx->sd = NULL;
     }
     free(sd_ctx);
+}
+
+bool sd_model_save_as_gguf(sd_ctx_t* sd_ctx, const char* file_path, const char* tensor_type_rules, sd_type_t new_type) {
+    if (sd_ctx == NULL || sd_ctx->sd == NULL) {
+        return false;
+    }
+    std::map<std::string, ggml_type> file_to_wtype;
+    sd_ctx->sd->model_loader->save_to_gguf(file_path, tensor_type_rules, file_to_wtype, (ggml_type)new_type, sd_ctx->sd->n_threads);
+    return true;
 }
 
 enum sample_method_t sd_get_default_sample_method(const sd_ctx_t* sd_ctx) {
