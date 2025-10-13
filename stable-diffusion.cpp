@@ -168,31 +168,65 @@ public:
 #endif
 #ifdef SD_USE_VULKAN
         LOG_DEBUG("Using Vulkan backend");
-        size_t device          = 0;
-        const int device_count = ggml_backend_vk_get_device_count();
-        if (device_count) {
-            const char* SD_VK_DEVICE = getenv("SD_VK_DEVICE");
-            if (SD_VK_DEVICE != nullptr) {
-                std::string sd_vk_device_str = SD_VK_DEVICE;
-                try {
-                    device = std::stoull(sd_vk_device_str);
-                } catch (const std::invalid_argument&) {
-                    LOG_WARN("SD_VK_DEVICE environment variable is not a valid integer (%s). Falling back to device 0.", SD_VK_DEVICE);
-                    device = 0;
-                } catch (const std::out_of_range&) {
-                    LOG_WARN("SD_VK_DEVICE environment variable value is out of range for `unsigned long long` type (%s). Falling back to device 0.", SD_VK_DEVICE);
-                    device = 0;
+        int dev_count = ggml_backend_vk_get_device_count();
+        int dev = 0;
+
+        // Log available devices
+        LOG_INFO("Found %d Vulkan devices:", dev_count);
+        for (int i = 0; i < dev_count; ++i) {
+            char desc[256] = {0};
+            size_t free_mem = 0;
+            size_t total_mem = 0;
+            ggml_backend_vk_get_device_description(i, desc, sizeof(desc));
+            ggml_backend_vk_get_device_memory(i, &free_mem, &total_mem);
+            LOG_INFO("  - %d: %s (VRAM: %.2f / %.2f GB)", i, desc, free_mem / 1024.0 / 1024.0 / 1024.0, total_mem / 1024.0 / 1024.0 / 1024.0);
+        }
+
+        if (const char* s = getenv("GGML_VK_DEVICE")) {
+            int v = atoi(s);
+            if (v >= 0 && v < dev_count) {
+                dev = v;
+            }
+        } else {
+            // If no device is specified, try to find the best one
+            int64_t max_score = -1;
+            int best_dev = 0;
+            for (int i = 0; i < dev_count; i++) {
+                char desc[256] = {0};
+                size_t free_mem = 0;
+                size_t total_mem = 0;
+                ggml_backend_vk_get_device_description(i, desc, sizeof(desc));
+                ggml_backend_vk_get_device_memory(i, &free_mem, &total_mem);
+
+                int64_t score = total_mem; // Base score on VRAM
+
+                std::string d(desc);
+                // Adjust score based on device type
+                if (d.find("Radeon") != std::string::npos || d.find("NVIDIA") != std::string::npos || d.find("Arc") != std::string::npos) {
+                    score += 1LL << 40; // Discrete GPU bonus
                 }
-                if (device >= device_count) {
-                    LOG_WARN("Cannot find targeted vulkan device (%llu). Falling back to device 0.", device);
-                    device = 0;
+                if (d.find("Integrated") != std::string::npos) {
+                    score -= 1LL << 40; // Integrated GPU penalty
+                }
+                if (d.find("SwiftShader") != std::string::npos) {
+                    score = -1; // Heavily penalize software renderer
+                }
+
+                if (score > max_score) {
+                    max_score = score;
+                    best_dev = i;
                 }
             }
-            LOG_INFO("Vulkan: Using device %llu", device);
-            backend = ggml_backend_vk_init(device);
+            dev = best_dev;
         }
+
+        backend = ggml_backend_vk_init(dev);
         if (!backend) {
-            LOG_WARN("Failed to initialize Vulkan backend");
+            LOG_WARN("Failed to initialize Vulkan backend (device %d)", dev);
+        } else {
+            char desc[256] = {0};
+            ggml_backend_vk_get_device_description(dev, desc, sizeof(desc));
+            LOG_INFO("Vulkan selected device: %d - %s", dev, desc);
         }
 #endif
 #ifdef SD_USE_OPENCL
