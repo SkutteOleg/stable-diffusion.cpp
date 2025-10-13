@@ -164,11 +164,65 @@ public:
 #endif
 #ifdef SD_USE_VULKAN
         LOG_DEBUG("Using Vulkan backend");
-        for (int device = 0; device < ggml_backend_vk_get_device_count(); ++device) {
-            backend = ggml_backend_vk_init(device);
+        int dev_count = ggml_backend_vk_get_device_count();
+        int dev = 0;
+
+        // Log available devices
+        LOG_INFO("Found %d Vulkan devices:", dev_count);
+        for (int i = 0; i < dev_count; ++i) {
+            char desc[256] = {0};
+            size_t free_mem = 0;
+            size_t total_mem = 0;
+            ggml_backend_vk_get_device_description(i, desc, sizeof(desc));
+            ggml_backend_vk_get_device_memory(i, &free_mem, &total_mem);
+            LOG_INFO("  - %d: %s (VRAM: %.2f / %.2f GB)", i, desc, free_mem / 1024.0 / 1024.0 / 1024.0, total_mem / 1024.0 / 1024.0 / 1024.0);
         }
+
+        if (const char* s = getenv("GGML_VK_DEVICE")) {
+            int v = atoi(s);
+            if (v >= 0 && v < dev_count) {
+                dev = v;
+            }
+        } else {
+            // If no device is specified, try to find the best one
+            int64_t max_score = -1;
+            int best_dev = 0;
+            for (int i = 0; i < dev_count; i++) {
+                char desc[256] = {0};
+                size_t free_mem = 0;
+                size_t total_mem = 0;
+                ggml_backend_vk_get_device_description(i, desc, sizeof(desc));
+                ggml_backend_vk_get_device_memory(i, &free_mem, &total_mem);
+
+                int64_t score = total_mem; // Base score on VRAM
+
+                std::string d(desc);
+                // Adjust score based on device type
+                if (d.find("Radeon") != std::string::npos || d.find("NVIDIA") != std::string::npos || d.find("Arc") != std::string::npos) {
+                    score += 1LL << 40; // Discrete GPU bonus
+                }
+                if (d.find("Integrated") != std::string::npos) {
+                    score -= 1LL << 40; // Integrated GPU penalty
+                }
+                if (d.find("SwiftShader") != std::string::npos) {
+                    score = -1; // Heavily penalize software renderer
+                }
+
+                if (score > max_score) {
+                    max_score = score;
+                    best_dev = i;
+                }
+            }
+            dev = best_dev;
+        }
+
+        backend = ggml_backend_vk_init(dev);
         if (!backend) {
-            LOG_WARN("Failed to initialize Vulkan backend");
+            LOG_WARN("Failed to initialize Vulkan backend (device %d)", dev);
+        } else {
+            char desc[256] = {0};
+            ggml_backend_vk_get_device_description(dev, desc, sizeof(desc));
+            LOG_INFO("Vulkan selected device: %d - %s", dev, desc);
         }
 #endif
 #ifdef SD_USE_OPENCL
