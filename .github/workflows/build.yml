@@ -9,7 +9,7 @@ on:
         type: boolean
   push:
     branches:
-      - master
+      - dreamio
       - ci
     paths:
       [
@@ -78,14 +78,14 @@ jobs:
 
       - name: Pack artifacts
         id: pack_artifacts
-        if: ${{ ( github.event_name == 'push' && github.ref == 'refs/heads/master' ) || github.event.inputs.create_release == 'true' }}
+        if: ${{ ( github.event_name == 'push' && github.ref == 'refs/heads/dreamio' ) || github.event.inputs.create_release == 'true' }}
         run: |
           cp ggml/LICENSE ./build/bin/ggml.txt
           cp LICENSE ./build/bin/stable-diffusion.cpp.txt
           zip -j sd-${{ env.BRANCH_NAME }}-${{ steps.commit.outputs.short }}-bin-${{ steps.system-info.outputs.OS_TYPE }}-${{ steps.system-info.outputs.OS_NAME }}-${{ steps.system-info.outputs.OS_VERSION }}-${{ steps.system-info.outputs.CPU_ARCH }}.zip ./build/bin/*
 
       - name: Upload artifacts
-        if: ${{ ( github.event_name == 'push' && github.ref == 'refs/heads/master' ) || github.event.inputs.create_release == 'true' }}
+        if: ${{ ( github.event_name == 'push' && github.ref == 'refs/heads/dreamio' ) || github.event.inputs.create_release == 'true' }}
         uses: actions/upload-artifact@v4
         with:
           name: sd-${{ env.BRANCH_NAME }}-${{ steps.commit.outputs.short }}-bin-${{ steps.system-info.outputs.OS_TYPE }}-${{ steps.system-info.outputs.OS_NAME }}-${{ steps.system-info.outputs.OS_VERSION }}-${{ steps.system-info.outputs.CPU_ARCH }}.zip
@@ -131,14 +131,14 @@ jobs:
 
       - name: Pack artifacts
         id: pack_artifacts
-        if: ${{ ( github.event_name == 'push' && github.ref == 'refs/heads/master' ) || github.event.inputs.create_release == 'true' }}
+        if: ${{ ( github.event_name == 'push' && github.ref == 'refs/heads/dreamio' ) || github.event.inputs.create_release == 'true' }}
         run: |
           cp ggml/LICENSE ./build/bin/ggml.txt
           cp LICENSE ./build/bin/stable-diffusion.cpp.txt
           zip -j sd-${{ env.BRANCH_NAME }}-${{ steps.commit.outputs.short }}-bin-${{ steps.system-info.outputs.OS_TYPE }}-${{ steps.system-info.outputs.OS_NAME }}-${{ steps.system-info.outputs.OS_VERSION }}-${{ steps.system-info.outputs.CPU_ARCH }}.zip ./build/bin/*
 
       - name: Upload artifacts
-        if: ${{ ( github.event_name == 'push' && github.ref == 'refs/heads/master' ) || github.event.inputs.create_release == 'true' }}
+        if: ${{ ( github.event_name == 'push' && github.ref == 'refs/heads/dreamio' ) || github.event.inputs.create_release == 'true' }}
         uses: actions/upload-artifact@v4
         with:
           name: sd-${{ env.BRANCH_NAME }}-${{ steps.commit.outputs.short }}-bin-${{ steps.system-info.outputs.OS_TYPE }}-${{ steps.system-info.outputs.OS_NAME }}-${{ steps.system-info.outputs.OS_VERSION }}-${{ steps.system-info.outputs.CPU_ARCH }}.zip
@@ -146,7 +146,7 @@ jobs:
             sd-${{ env.BRANCH_NAME }}-${{ steps.commit.outputs.short }}-bin-${{ steps.system-info.outputs.OS_TYPE }}-${{ steps.system-info.outputs.OS_NAME }}-${{ steps.system-info.outputs.OS_VERSION }}-${{ steps.system-info.outputs.CPU_ARCH }}.zip
 
   windows-latest-cmake:
-    runs-on: windows-2025
+    runs-on: windows-2022
 
     env:
       VULKAN_VERSION: 1.4.328.1
@@ -155,17 +155,21 @@ jobs:
       matrix:
         include:
           - build: "noavx"
-            defines: "-DGGML_NATIVE=OFF -DGGML_AVX=OFF -DGGML_AVX2=OFF -DGGML_FMA=OFF -DSD_BUILD_SHARED_LIBS=ON"
+            defines: "-DGGML_NATIVE=OFF -DGGML_AVX=OFF -DGGML_AVX2=OFF -DGGML_AVX512=OFF -DGGML_FMA=OFF -DSD_BUILD_SHARED_LIBS=ON"
           - build: "avx2"
-            defines: "-DGGML_NATIVE=OFF -DGGML_AVX2=ON -DSD_BUILD_SHARED_LIBS=ON"
+            defines: "-DGGML_NATIVE=OFF -DGGML_AVX2=ON -DGGML_AVX512=OFF -DSD_BUILD_SHARED_LIBS=ON"
           - build: "avx"
-            defines: "-DGGML_NATIVE=OFF -DGGML_AVX=ON -DGGML_AVX2=OFF -DSD_BUILD_SHARED_LIBS=ON"
+            defines: "-DGGML_NATIVE=OFF -DGGML_AVX=ON -DGGML_AVX2=OFF -DGGML_AVX512=OFF -DSD_BUILD_SHARED_LIBS=ON"
           - build: "avx512"
             defines: "-DGGML_NATIVE=OFF -DGGML_AVX512=ON -DGGML_AVX=ON -DGGML_AVX2=ON -DSD_BUILD_SHARED_LIBS=ON"
           - build: "cuda12"
-            defines: "-DSD_CUDA=ON -DSD_BUILD_SHARED_LIBS=ON -DCMAKE_CUDA_ARCHITECTURES='61;70;75;80;86;89;90;100;120' -DCMAKE_CUDA_FLAGS='-Xcudafe \"--diag_suppress=177\" -Xcudafe \"--diag_suppress=550\"'"
+            defines: "-DSD_CUDA=ON -DGGML_AVX512=OFF -DSD_BUILD_SHARED_LIBS=ON"
+          - build: "cuda12-noavx"
+            defines: "-DGGML_NATIVE=OFF -DSD_CUDA=ON -DGGML_AVX=OFF -DGGML_AVX2=OFF -DGGML_AVX512=OFF -DGGML_FMA=OFF -DSD_BUILD_SHARED_LIBS=ON"
           - build: 'vulkan'
-            defines: "-DSD_VULKAN=ON -DSD_BUILD_SHARED_LIBS=ON"
+            defines: "-DSD_VULKAN=ON -DGGML_AVX512=OFF -DSD_BUILD_SHARED_LIBS=ON"
+          - build: 'vulkan-noavx'
+            defines: "-DGGML_NATIVE=OFF -DSD_VULKAN=ON -DGGML_AVX=OFF -DGGML_AVX2=OFF -DGGML_AVX512=OFF -DGGML_FMA=OFF -DSD_BUILD_SHARED_LIBS=ON"
     steps:
       - name: Clone
         id: checkout
@@ -175,32 +179,28 @@ jobs:
 
       - name: Install cuda-toolkit
         id: cuda-toolkit
-        if: ${{ matrix.build == 'cuda12' }}
+        if: ${{ matrix.build == 'cuda12' || matrix.build == 'cuda12-noavx' }}
         uses: Jimver/cuda-toolkit@v0.2.22
         with:
-          cuda: "12.8.1"
+          cuda: "12.4.0"
           method: "network"
           sub-packages: '["nvcc", "cudart", "cublas", "cublas_dev", "thrust", "visual_studio_integration"]'
 
       - name: Install Vulkan SDK
         id: get_vulkan
-        if: ${{ matrix.build == 'vulkan' }}
+        if: ${{ matrix.build == 'vulkan' || matrix.build == 'vulkan-noavx' }}
         run: |
           curl.exe -o $env:RUNNER_TEMP/VulkanSDK-Installer.exe -L "https://sdk.lunarg.com/sdk/download/${env:VULKAN_VERSION}/windows/vulkansdk-windows-X64-${env:VULKAN_VERSION}.exe"
           & "$env:RUNNER_TEMP\VulkanSDK-Installer.exe" --accept-licenses --default-answer --confirm-command install
           Add-Content $env:GITHUB_ENV "VULKAN_SDK=C:\VulkanSDK\${env:VULKAN_VERSION}"
           Add-Content $env:GITHUB_PATH "C:\VulkanSDK\${env:VULKAN_VERSION}\bin"
 
-      - name: Activate MSVC environment
-        id: msvc_dev_cmd
-        uses: ilammy/msvc-dev-cmd@v1
-
       - name: Build
         id: cmake_build
         run: |
           mkdir build
           cd build
-          cmake .. -DCMAKE_CXX_FLAGS='/bigobj' -G Ninja -DCMAKE_C_COMPILER=cl.exe -DCMAKE_CXX_COMPILER=cl.exe ${{ matrix.defines }}
+          cmake .. ${{ matrix.defines }}
           cmake --build . --config Release
 
       - name: Check AVX512F support
@@ -218,12 +218,12 @@ jobs:
 
       - name: Get commit hash
         id: commit
-        if: ${{ ( github.event_name == 'push' && github.ref == 'refs/heads/master' ) || github.event.inputs.create_release == 'true' }}
+        if: ${{ ( github.event_name == 'push' && github.ref == 'refs/heads/dreamio' ) || github.event.inputs.create_release == 'true' }}
         uses: pr-mpt/actions-commit-hash@v2
 
       - name: Pack artifacts
         id: pack_artifacts
-        if: ${{ ( github.event_name == 'push' && github.ref == 'refs/heads/master' ) || github.event.inputs.create_release == 'true' }}
+        if: ${{ ( github.event_name == 'push' && github.ref == 'refs/heads/dreamio' ) || github.event.inputs.create_release == 'true' }}
         run: |
           $filePath = ".\build\bin\Release\*"
           if (Test-Path $filePath) {
@@ -243,7 +243,7 @@ jobs:
 
       - name: Copy and pack Cuda runtime
         id: pack_cuda_runtime
-        if: ${{ matrix.build == 'cuda12' && (github.event_name == 'push' && github.ref == 'refs/heads/master' || github.event.inputs.create_release == 'true') }}
+        if: ${{ matrix.build == 'cuda12' && (github.event_name == 'push' && github.ref == 'refs/heads/dreamio' || github.event.inputs.create_release == 'true') }}
         run: |
           echo "Cuda install location: ${{steps.cuda-toolkit.outputs.CUDA_PATH}}"
           $dst='.\build\bin\cudart\'
@@ -251,7 +251,7 @@ jobs:
           7z a cudart-sd-bin-win-cu12-x64.zip $dst\*
 
       - name: Upload Cuda runtime
-        if: ${{ matrix.build == 'cuda12' && (github.event_name == 'push' && github.ref == 'refs/heads/master' || github.event.inputs.create_release == 'true') }}
+        if: ${{ matrix.build == 'cuda12' && (github.event_name == 'push' && github.ref == 'refs/heads/dreamio' || github.event.inputs.create_release == 'true') }}
         uses: actions/upload-artifact@v4
         with:
           name: sd-cudart-sd-bin-win-cu12-x64.zip
@@ -259,113 +259,15 @@ jobs:
             cudart-sd-bin-win-cu12-x64.zip
 
       - name: Upload artifacts
-        if: ${{ ( github.event_name == 'push' && github.ref == 'refs/heads/master' ) || github.event.inputs.create_release == 'true' }}
+        if: ${{ ( github.event_name == 'push' && github.ref == 'refs/heads/dreamio' ) || github.event.inputs.create_release == 'true' }}
         uses: actions/upload-artifact@v4
         with:
           name: sd-${{ env.BRANCH_NAME }}-${{ steps.commit.outputs.short }}-bin-win-${{ matrix.build }}-x64.zip
           path: |
             sd-${{ env.BRANCH_NAME }}-${{ steps.commit.outputs.short }}-bin-win-${{ matrix.build }}-x64.zip
 
-  windows-latest-cmake-hip:
-    runs-on: windows-2022
-
-    env:
-      HIPSDK_INSTALLER_VERSION: "25.Q3"
-      GPU_TARGETS: "gfx1151;gfx1200;gfx1201;gfx1100;gfx1101;gfx1102;gfx1030;gfx1031;gfx1032"
-
-    steps:
-      - uses: actions/checkout@v3
-        with:
-          submodules: recursive
-
-      - name: Cache ROCm Installation
-        id: cache-rocm
-        uses: actions/cache@v4
-        with:
-          path: C:\Program Files\AMD\ROCm
-          key: rocm-${{ env.HIPSDK_INSTALLER_VERSION }}-${{ runner.os }}
-
-      - name: ccache
-        uses: ggml-org/ccache-action@v1.2.16
-        with:
-          key: windows-latest-cmake-hip-${{ env.HIPSDK_INSTALLER_VERSION }}-x64
-          evict-old-files: 1d
-
-      - name: Install ROCm
-        if: steps.cache-rocm.outputs.cache-hit != 'true'
-        run: |
-          $ErrorActionPreference = "Stop"
-          write-host "Downloading AMD HIP SDK Installer"
-          Invoke-WebRequest -Uri "https://download.amd.com/developer/eula/rocm-hub/AMD-Software-PRO-Edition-${{ env.HIPSDK_INSTALLER_VERSION }}-WinSvr2022-For-HIP.exe" -OutFile "${env:RUNNER_TEMP}\rocm-install.exe"
-          write-host "Installing AMD HIP SDK"
-          $proc = Start-Process "${env:RUNNER_TEMP}\rocm-install.exe" -ArgumentList '-install' -NoNewWindow -PassThru
-          $completed = $proc.WaitForExit(600000)
-          if (-not $completed) {
-              Write-Error "ROCm installation timed out after 10 minutes. Killing the process"
-              $proc.Kill()
-              exit 1
-          }
-          if ($proc.ExitCode -ne 0) {
-              Write-Error "ROCm installation failed with exit code $($proc.ExitCode)"
-              exit 1
-          }
-          write-host "Completed AMD HIP SDK installation"
-
-      - name: Verify ROCm
-        run: |
-          # Find and test ROCm installation
-          $clangPath = Get-ChildItem 'C:\Program Files\AMD\ROCm\*\bin\clang.exe' | Select-Object -First 1
-          if (-not $clangPath) {
-            Write-Error "ROCm installation not found"
-            exit 1
-          }
-          & $clangPath.FullName --version
-          # Set HIP_PATH environment variable for later steps
-          echo "HIP_PATH=$(Resolve-Path 'C:\Program Files\AMD\ROCm\*\bin\clang.exe' | split-path | split-path)" >> $env:GITHUB_ENV
-
-      - name: Build
-        run: |
-          mkdir build
-          cd build
-          $env:CMAKE_PREFIX_PATH="${env:HIP_PATH}"
-          cmake .. `
-            -G "Unix Makefiles" `
-            -DSD_HIPBLAS=ON `
-            -DSD_BUILD_SHARED_LIBS=ON `
-            -DGGML_NATIVE=OFF `
-            -DCMAKE_C_COMPILER=clang `
-            -DCMAKE_CXX_COMPILER=clang++ `
-            -DCMAKE_BUILD_TYPE=Release `
-            -DGPU_TARGETS="${{ env.GPU_TARGETS }}"
-          cmake --build . --config Release --parallel ${env:NUMBER_OF_PROCESSORS}
-
-      - name: Get commit hash
-        id: commit
-        if: ${{ ( github.event_name == 'push' && github.ref == 'refs/heads/master' ) || github.event.inputs.create_release == 'true' }}
-        uses: pr-mpt/actions-commit-hash@v2
-
-      - name: Pack artifacts
-        if: ${{ ( github.event_name == 'push' && github.ref == 'refs/heads/master' ) || github.event.inputs.create_release == 'true' }}
-        run: |
-          md "build\bin\rocblas\library\"
-          md "build\bin\hipblaslt\library"
-          cp "${env:HIP_PATH}\bin\hipblas.dll" "build\bin\"
-          cp "${env:HIP_PATH}\bin\hipblaslt.dll" "build\bin\"
-          cp "${env:HIP_PATH}\bin\rocblas.dll" "build\bin\"
-          cp "${env:HIP_PATH}\bin\rocblas\library\*" "build\bin\rocblas\library\"
-          cp "${env:HIP_PATH}\bin\hipblaslt\library\*" "build\bin\hipblaslt\library\"
-          7z a sd-${{ env.BRANCH_NAME }}-${{ steps.commit.outputs.short }}-bin-win-rocm-x64.zip .\build\bin\*
-
-      - name: Upload artifacts
-        if: ${{ ( github.event_name == 'push' && github.ref == 'refs/heads/master' ) || github.event.inputs.create_release == 'true' }}
-        uses: actions/upload-artifact@v4
-        with:
-          name: sd-${{ env.BRANCH_NAME }}-${{ steps.commit.outputs.short }}-bin-win-rocm-x64.zip
-          path: |
-            sd-${{ env.BRANCH_NAME }}-${{ steps.commit.outputs.short }}-bin-win-rocm-x64.zip
-
   release:
-    if: ${{ ( github.event_name == 'push' && github.ref == 'refs/heads/master' ) || github.event.inputs.create_release == 'true' }}
+    if: ${{ ( github.event_name == 'push' && github.ref == 'refs/heads/dreamio' ) || github.event.inputs.create_release == 'true' }}
 
     runs-on: ubuntu-latest
 
@@ -373,7 +275,6 @@ jobs:
       - ubuntu-latest-cmake
       - macOS-latest-cmake
       - windows-latest-cmake
-      - windows-latest-cmake-hip
 
     steps:
       - name: Clone
@@ -400,7 +301,7 @@ jobs:
 
       - name: Create release
         id: create_release
-        if: ${{ github.event_name == 'workflow_dispatch' || github.ref_name == 'master' }}
+        if: ${{ github.event_name == 'workflow_dispatch' || github.ref_name == 'dreamio' }}
         uses: anzz1/action-create-release@v1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -409,7 +310,7 @@ jobs:
 
       - name: Upload release
         id: upload_release
-        if: ${{ github.event_name == 'workflow_dispatch' || github.ref_name == 'master' }}
+        if: ${{ github.event_name == 'workflow_dispatch' || github.ref_name == 'dreamio' }}
         uses: actions/github-script@v3
         with:
           github-token: ${{secrets.GITHUB_TOKEN}}
