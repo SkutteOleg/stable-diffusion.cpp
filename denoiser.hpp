@@ -342,6 +342,7 @@ struct Denoiser {
         auto bound_t_to_sigma = std::bind(&Denoiser::t_to_sigma, this, std::placeholders::_1);
         return scheduler->get_sigmas(n, sigma_min(), sigma_max(), bound_t_to_sigma);
     }
+
 };
 
 struct CompVisDenoiser : public Denoiser {

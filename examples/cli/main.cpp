@@ -130,6 +130,11 @@ struct SDParams {
 
     prediction_t prediction = DEFAULT_PRED;
 
+    bool chroma_cache_enabled    = false;
+    float chroma_cache_start     = 0.3f;
+    float chroma_cache_end       = 1.0f;
+    int chroma_cache_interval    = 4;
+
     sd_tiling_params_t vae_tiling_params = {false, 0, 0, 0.5f, 0.0f, 0.0f};
     bool force_sdxl_vae_conv_scale       = false;
 
@@ -204,6 +209,10 @@ void print_params(SDParams params) {
     printf("    chroma_use_dit_mask:               %s\n", params.chroma_use_dit_mask ? "true" : "false");
     printf("    chroma_use_t5_mask:                %s\n", params.chroma_use_t5_mask ? "true" : "false");
     printf("    chroma_t5_mask_pad:                %d\n", params.chroma_t5_mask_pad);
+    printf("    chroma_cache_enabled:              %s\n", params.chroma_cache_enabled ? "true" : "false");
+    printf("    chroma_cache_start:                %f\n", params.chroma_cache_start);
+    printf("    chroma_cache_end:                  %f\n", params.chroma_cache_end);
+    printf("    chroma_cache_interval:             %d\n", params.chroma_cache_interval);
     printf("    video_frames:                      %d\n", params.video_frames);
     printf("    vace_strength:                     %.2f\n", params.vace_strength);
     printf("    fps:                               %d\n", params.fps);
@@ -311,6 +320,10 @@ void print_usage(int argc, const char* argv[]) {
     printf("  --chroma-disable-dit-mask          disable dit mask for chroma\n");
     printf("  --chroma-enable-t5-mask            enable t5 mask for chroma\n");
     printf("  --chroma-t5-mask-pad  PAD_SIZE     t5 mask pad size of chroma\n");
+    printf("  --chroma-cache                     enable chroma cache\n");
+    printf("  --chroma-cache-start               chroma cache start step (default: 0.3)\n");
+    printf("  --chroma-cache-end                 chroma cache end step (default: 1.0)\n");
+    printf("  --chroma-cache-interval            chroma cache interval (default: 4)\n");
     printf("  --video-frames                     video frames (default: 1)\n");
     printf("  --fps                              fps (default: 24)\n");
     printf("  --moe-boundary BOUNDARY            timestep boundary for Wan2.2 MoE model. (default: 0.875)\n");
@@ -538,6 +551,7 @@ void parse_args(int argc, const char** argv, SDParams& params) {
         {"", "--video-frames", "", &params.video_frames},
         {"", "--fps", "", &params.fps},
         {"", "--timestep-shift", "", &params.sample_params.shifted_timestep},
+        {"", "--chroma-cache-interval", "", &params.chroma_cache_interval},
     };
 
     options.float_options = {
@@ -563,6 +577,8 @@ void parse_args(int argc, const char** argv, SDParams& params) {
         {"", "--flow-shift", "", &params.flow_shift},
         {"", "--vace-strength", "", &params.vace_strength},
         {"", "--vae-tile-overlap", "", &params.vae_tiling_params.target_overlap},
+        {"", "--chroma-cache-start", "", &params.chroma_cache_start},
+        {"", "--chroma-cache-end", "", &params.chroma_cache_end},
     };
 
     options.bool_options = {
@@ -581,6 +597,7 @@ void parse_args(int argc, const char** argv, SDParams& params) {
         {"", "--chroma-disable-dit-mask", "", false, &params.chroma_use_dit_mask},
         {"", "--chroma-enable-t5-mask", "", true, &params.chroma_use_t5_mask},
         {"", "--increase-ref-index", "", true, &params.increase_ref_index},
+        {"", "--chroma-cache", "", true, &params.chroma_cache_enabled},
     };
 
     auto on_mode_arg = [&](int argc, const char** argv, int index) {
@@ -1393,6 +1410,10 @@ int main(int argc, const char* argv[]) {
         params.chroma_use_t5_mask,
         params.chroma_t5_mask_pad,
         params.flow_shift,
+        params.chroma_cache_enabled,
+        params.chroma_cache_start,
+        params.chroma_cache_end,
+        params.chroma_cache_interval,
     };
 
     sd_image_t* results = nullptr;
@@ -1449,7 +1470,7 @@ int main(int argc, const char* argv[]) {
                 params.vae_tiling_params,
             };
 
-            results     = generate_image(sd_ctx, &img_gen_params);
+            results     = generate_image(sd_ctx, &sd_ctx_params, &img_gen_params);
             num_results = params.batch_count;
         } else if (params.mode == VID_GEN) {
             sd_vid_gen_params_t vid_gen_params = {

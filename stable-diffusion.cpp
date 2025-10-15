@@ -15,6 +15,7 @@
 #include "pmid.hpp"
 #include "tae.hpp"
 #include "vae.hpp"
+#include "chroma_cache.hpp"
 
 #include <stdexcept>
 
@@ -1278,6 +1279,19 @@ public:
         int64_t t0 = ggml_time_us();
 
         auto denoise = [&](ggml_tensor* input, float sigma, int step) -> ggml_tensor* {
+            if (get_current_cache_context() != NULL) {
+                auto cache_context = get_current_cache_context();
+                bool can_use_cache = cache_context->get_buffer("hidden_states") != NULL;
+                can_use_cache      = can_use_cache && sigma <= chroma_cache_start_sigma && sigma >= chroma_cache_end_sigma;
+                can_use_cache      = can_use_cache && cache_context->consecutive_cache_hits < chroma_cache_interval;
+                if (can_use_cache) {
+                    cache_context->consecutive_cache_hits++;
+                } else {
+                    cache_context->consecutive_cache_hits = 0;
+                }
+                cache_context->use_cache = can_use_cache;
+            }
+
             if (step == 1 || step == -1) {
                 pretty_progress(0, (int)steps, 0);
             }
@@ -1333,37 +1347,54 @@ public:
             diffusion_params.vace_context       = vace_context;
             diffusion_params.vace_strength      = vace_strength;
 
-            if (start_merge_step == -1 || step <= start_merge_step) {
-                // cond
-                diffusion_params.context  = cond.c_crossattn;
-                diffusion_params.c_concat = cond.c_concat;
-                diffusion_params.y        = cond.c_vector;
-                work_diffusion_model->compute(n_threads,
-                                              diffusion_params,
-                                              &out_cond);
+            if (get_current_cache_context() != NULL && get_current_cache_context()->use_cache) {
+                out_cond = get_current_cache_context()->get_buffer("hidden_states");
+                // LOG_DEBUG("use cache");
             } else {
-                diffusion_params.context  = id_cond.c_crossattn;
-                diffusion_params.c_concat = cond.c_concat;
-                diffusion_params.y        = id_cond.c_vector;
-                work_diffusion_model->compute(n_threads,
-                                              diffusion_params,
-                                              &out_cond);
+                if (start_merge_step == -1 || step <= start_merge_step) {
+                    // cond
+                    diffusion_params.context  = cond.c_crossattn;
+                    diffusion_params.c_concat = cond.c_concat;
+                    diffusion_params.y        = cond.c_vector;
+                    work_diffusion_model->compute(n_threads,
+                                                  diffusion_params,
+                                                  &out_cond);
+                } else {
+                    diffusion_params.context  = id_cond.c_crossattn;
+                    diffusion_params.c_concat = cond.c_concat;
+                    diffusion_params.y        = id_cond.c_vector;
+                    work_diffusion_model->compute(n_threads,
+                                                  diffusion_params,
+                                                  &out_cond);
+                }
+                if (get_current_cache_context() != NULL) {
+                    get_current_cache_context()->set_buffer("hidden_states", out_cond);
+                }
             }
 
             float* negative_data = NULL;
             if (has_unconditioned) {
-                // uncond
-                if (control_hint != NULL && control_net != NULL) {
-                    control_net->compute(n_threads, noised_input, control_hint, timesteps, uncond.c_crossattn, uncond.c_vector);
-                    controls = control_net->controls;
+                if (get_current_cache_context() != NULL && get_current_cache_context()->use_cache) {
+                    out_uncond = get_current_cache_context()->get_buffer("uncond_hidden_states");
+                    // LOG_DEBUG("use cache");
+                } else {
+                    // uncond
+                    if (control_hint != NULL && control_net != NULL) {
+                        control_net->compute(n_threads, noised_input, control_hint, timesteps, uncond.c_crossattn, uncond.c_vector);
+                        controls = control_net->controls;
+                    }
+                    diffusion_params.controls = controls;
+                    diffusion_params.context  = uncond.c_crossattn;
+                    diffusion_params.c_concat = uncond.c_concat;
+                    diffusion_params.y        = uncond.c_vector;
+                    work_diffusion_model->compute(n_threads,
+                                                  diffusion_params,
+                                                  &out_uncond);
+                    if (get_current_cache_context() != NULL) {
+                        get_current_cache_context()->set_buffer("uncond_hidden_states", out_uncond);
+                    }
                 }
-                diffusion_params.controls = controls;
-                diffusion_params.context  = uncond.c_crossattn;
-                diffusion_params.c_concat = uncond.c_concat;
-                diffusion_params.y        = uncond.c_vector;
-                work_diffusion_model->compute(n_threads,
-                                              diffusion_params,
-                                              &out_uncond);
+
                 negative_data = (float*)out_uncond->data;
             }
 
@@ -1906,6 +1937,10 @@ void sd_ctx_params_init(sd_ctx_params_t* sd_ctx_params) {
     sd_ctx_params->chroma_use_t5_mask      = false;
     sd_ctx_params->chroma_t5_mask_pad      = 1;
     sd_ctx_params->flow_shift              = INFINITY;
+    sd_ctx_params->chroma_cache_enabled    = false;
+    sd_ctx_params->chroma_cache_start      = 0.3f;
+    sd_ctx_params->chroma_cache_end        = 1.0f;
+    sd_ctx_params->chroma_cache_interval   = 4;
 }
 
 char* sd_ctx_params_to_str(const sd_ctx_params_t* sd_ctx_params) {
@@ -1931,7 +1966,6 @@ char* sd_ctx_params_to_str(const sd_ctx_params_t* sd_ctx_params) {
              "embedding_dir: %s\n"
              "photo_maker_path: %s\n"
              "vae_decode_only: %s\n"
-             "vae_tiling: %s\n"
              "free_params_immediately: %s\n"
              "n_threads: %d\n"
              "wtype: %s\n"
@@ -1944,7 +1978,12 @@ char* sd_ctx_params_to_str(const sd_ctx_params_t* sd_ctx_params) {
              "diffusion_flash_attn: %s\n"
              "chroma_use_dit_mask: %s\n"
              "chroma_use_t5_mask: %s\n"
-             "chroma_t5_mask_pad: %d\n",
+             "chroma_t5_mask_pad: %d\n"
+             "flow_shift: %f\n"
+             "chroma_cache_enabled: %s\n"
+             "chroma_cache_start: %f\n"
+             "chroma_cache_end: %f\n"
+             "chroma_cache_interval: %d\n",
              SAFE_STR(sd_ctx_params->model_path),
              SAFE_STR(sd_ctx_params->clip_l_path),
              SAFE_STR(sd_ctx_params->clip_g_path),
@@ -1973,7 +2012,12 @@ char* sd_ctx_params_to_str(const sd_ctx_params_t* sd_ctx_params) {
              BOOL_STR(sd_ctx_params->diffusion_flash_attn),
              BOOL_STR(sd_ctx_params->chroma_use_dit_mask),
              BOOL_STR(sd_ctx_params->chroma_use_t5_mask),
-             sd_ctx_params->chroma_t5_mask_pad);
+             sd_ctx_params->chroma_t5_mask_pad,
+             sd_ctx_params->flow_shift,
+             BOOL_STR(sd_ctx_params->chroma_cache_enabled),
+             sd_ctx_params->chroma_cache_start,
+             sd_ctx_params->chroma_cache_end,
+             sd_ctx_params->chroma_cache_interval);
 
     return buf;
 }
@@ -2184,6 +2228,7 @@ enum sample_method_t sd_get_default_sample_method(const sd_ctx_t* sd_ctx) {
 }
 
 sd_image_t* generate_image_internal(sd_ctx_t* sd_ctx,
+                                    const sd_ctx_params_t* sd_ctx_params,
                                     struct ggml_context* work_ctx,
                                     ggml_tensor* init_latent,
                                     std::string prompt,
@@ -2207,6 +2252,21 @@ sd_image_t* generate_image_internal(sd_ctx_t* sd_ctx,
                                     bool increase_ref_index,
                                     ggml_tensor* concat_latent = NULL,
                                     ggml_tensor* denoise_mask  = NULL) {
+    if (sd_ctx_params->chroma_cache_enabled) {
+        ensure_cache_context();
+        reset_cache_state();
+        int num_steps          = sigmas.size() - 1;
+        int start_step         = num_steps * sd_ctx_params->chroma_cache_start;
+        int end_step           = num_steps * sd_ctx_params->chroma_cache_end;
+        start_step             = std::min(start_step, num_steps - 1);
+        end_step               = std::min(end_step, num_steps - 1);
+        chroma_cache_start_sigma = sigmas[start_step];
+        chroma_cache_end_sigma   = sigmas[end_step];
+        chroma_cache_interval    = sd_ctx_params->chroma_cache_interval;
+    } else {
+        set_current_cache_context(NULL);
+    }
+
     if (seed < 0) {
         // Generally, when using the provided command line, the seed is always >0.
         // However, to prevent potential issues if 'stable-diffusion.cpp' is invoked as a library
@@ -2581,7 +2641,7 @@ ggml_tensor* generate_init_latent(sd_ctx_t* sd_ctx,
     return init_latent;
 }
 
-sd_image_t* generate_image(sd_ctx_t* sd_ctx, const sd_img_gen_params_t* sd_img_gen_params) {
+sd_image_t* generate_image(sd_ctx_t* sd_ctx, const sd_ctx_params_t* sd_ctx_params, const sd_img_gen_params_t* sd_img_gen_params) {
     try {
         ScopedGGMLAbortCallback abort_callback;
         sd_ctx->sd->vae_tiling_params = sd_img_gen_params->vae_tiling_params;
@@ -2810,6 +2870,7 @@ sd_image_t* generate_image(sd_ctx_t* sd_ctx, const sd_img_gen_params_t* sd_img_g
         }
 
         sd_image_t* result_images = generate_image_internal(sd_ctx,
+                                                            sd_ctx_params,
                                                             work_ctx,
                                                             init_latent,
                                                             SAFE_STR(sd_img_gen_params->prompt),
