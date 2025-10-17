@@ -49,6 +49,7 @@ enum sample_method_t {
     DDIM_TRAILING,
     TCD,
     EULER_A,
+    GRADIENT_ESTIMATION,
     SAMPLE_METHOD_COUNT
 };
 
@@ -219,6 +220,7 @@ typedef struct {
     enum sample_method_t sample_method;
     int sample_steps;
     float eta;
+    float ge_gamma;
     int shifted_timestep;
 } sd_sample_params_t;
 
