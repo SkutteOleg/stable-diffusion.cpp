@@ -72,6 +72,7 @@ const char* sampling_methods_str[] = {
     "TCD",
     "Res Multistep",
     "Res 2s",
+    "Gradient Estimation",
 };
 
 /*================================================== Helper Functions ================================================*/
@@ -2000,6 +2001,7 @@ public:
                         float eta,
                         int shifted_timestep,
                         sample_method_t method,
+                        float ge_gamma,
                         const std::vector<float>& sigmas,
                         int start_merge_step,
                         SDCondition id_cond,
@@ -2347,7 +2349,7 @@ public:
             return denoised;
         };
 
-        if (!sample_k_diffusion(method, denoise, work_ctx, x, sigmas, sampler_rng, eta)) {
+        if (!sample_k_diffusion(method, denoise, work_ctx, x, sigmas, sampler_rng, eta, ge_gamma)) {
             LOG_ERROR("Diffusion model sampling failed");
             if (control_net) {
                 control_net->free_control_ctx();
@@ -2521,6 +2523,7 @@ const char* sample_method_to_str[] = {
     "tcd",
     "res_multistep",
     "res_2s",
+    "gradient_estimation",
 };
 
 const char* sd_sample_method_name(enum sample_method_t sample_method) {
@@ -2780,6 +2783,7 @@ void sd_sample_params_init(sd_sample_params_t* sample_params) {
     sample_params->custom_sigmas               = nullptr;
     sample_params->custom_sigmas_count         = 0;
     sample_params->flow_shift                  = INFINITY;
+    sample_params->ge_gamma                    = 2.0f;
 }
 
 char* sd_sample_params_to_str(const sd_sample_params_t* sample_params) {
@@ -2800,6 +2804,7 @@ char* sd_sample_params_to_str(const sd_sample_params_t* sample_params) {
              "sample_method: %s, "
              "sample_steps: %d, "
              "eta: %.2f, "
+             "ge_gamma: %.2f, "
              "shifted_timestep: %d, "
              "flow_shift: %.2f)",
              sample_params->guidance.txt_cfg,
@@ -2815,6 +2820,7 @@ char* sd_sample_params_to_str(const sd_sample_params_t* sample_params) {
              sd_sample_method_name(sample_params->sample_method),
              sample_params->sample_steps,
              sample_params->eta,
+             sample_params->ge_gamma,
              sample_params->shifted_timestep,
              sample_params->flow_shift);
 
@@ -2978,6 +2984,7 @@ sd_image_t* generate_image_internal(sd_ctx_t* sd_ctx,
                                     int width,
                                     int height,
                                     enum sample_method_t sample_method,
+                                    float ge_gamma,
                                     const std::vector<float>& sigmas,
                                     int64_t seed,
                                     int batch_count,
@@ -3178,16 +3185,17 @@ sd_image_t* generate_image_internal(sd_ctx_t* sd_ctx,
                                                   eta,
                                                   shifted_timestep,
                                                   sample_method,
-                                                  sigmas,
-                                                  start_merge_step,
-                                                  id_cond,
-                                                  ref_latents,
-                                                  increase_ref_index,
-                                                  denoise_mask,
-                                                  nullptr,
-                                                  1.0f,
-                                                  cache_params);
-        int64_t sampling_end = ggml_time_ms();
+                                                  ge_gamma,
+                                                     sigmas,
+                                                     start_merge_step,
+                                                     id_cond,
+                                                     ref_latents,
+                                                     increase_ref_index,
+                                                     denoise_mask,
+                                                     nullptr,
+                                                     1.0f,
+                                                     cache_params);
+        int64_t sampling_end    = ggml_time_ms();
         if (x_0 != nullptr) {
             // print_ggml_tensor(x_0);
             LOG_INFO("sampling completed, taking %.2fs", (sampling_end - sampling_start) * 1.0f / 1000);
@@ -3551,6 +3559,7 @@ sd_image_t* generate_image(sd_ctx_t* sd_ctx, const sd_img_gen_params_t* sd_img_g
                                                         width,
                                                         height,
                                                         sample_method,
+                                                        sd_img_gen_params->sample_params.ge_gamma,
                                                         sigmas,
                                                         seed,
                                                         sd_img_gen_params->batch_count,
@@ -3930,6 +3939,7 @@ SD_API sd_image_t* generate_video(sd_ctx_t* sd_ctx, const sd_vid_gen_params_t* s
                                  sd_vid_gen_params->high_noise_sample_params.eta,
                                  sd_vid_gen_params->high_noise_sample_params.shifted_timestep,
                                  high_noise_sample_method,
+                                 sd_vid_gen_params->high_noise_sample_params.ge_gamma,
                                  high_noise_sigmas,
                                  -1,
                                  {},
@@ -3967,6 +3977,7 @@ SD_API sd_image_t* generate_video(sd_ctx_t* sd_ctx, const sd_vid_gen_params_t* s
                                           sd_vid_gen_params->sample_params.eta,
                                           sd_vid_gen_params->sample_params.shifted_timestep,
                                           sample_method,
+                                          sd_vid_gen_params->sample_params.ge_gamma,
                                           sigmas,
                                           -1,
                                           {},
