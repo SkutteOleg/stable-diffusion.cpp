@@ -50,6 +50,7 @@ enum sample_method_t {
     TCD_SAMPLE_METHOD,
     RES_MULTISTEP_SAMPLE_METHOD,
     RES_2S_SAMPLE_METHOD,
+    GRADIENT_ESTIMATION,
     SAMPLE_METHOD_COUNT
 };
 
@@ -231,6 +232,7 @@ typedef struct {
     enum sample_method_t sample_method;
     int sample_steps;
     float eta;
+    float ge_gamma;
     int shifted_timestep;
     float* custom_sigmas;
     int custom_sigmas_count;
