@@ -238,6 +238,13 @@ typedef struct {
 } sd_easycache_params_t;
 
 typedef struct {
+    bool enabled;
+    float start_percent;
+    float end_percent;
+    int interval;
+} sd_chroma_cache_params_t;
+
+typedef struct {
     const char* prompt;
     const char* negative_prompt;
     int clip_skip;
@@ -258,6 +265,7 @@ typedef struct {
     sd_pm_params_t pm_params;
     sd_tiling_params_t vae_tiling_params;
     sd_easycache_params_t easycache;
+    sd_chroma_cache_params_t chroma_cache;
 } sd_img_gen_params_t;
 
 typedef struct {
@@ -278,6 +286,7 @@ typedef struct {
     int video_frames;
     float vace_strength;
     sd_easycache_params_t easycache;
+    sd_chroma_cache_params_t chroma_cache;
 } sd_vid_gen_params_t;
 
 typedef struct sd_ctx_t sd_ctx_t;
@@ -308,6 +317,7 @@ SD_API const char* sd_lora_apply_mode_name(enum lora_apply_mode_t mode);
 SD_API enum lora_apply_mode_t str_to_lora_apply_mode(const char* str);
 
 SD_API void sd_easycache_params_init(sd_easycache_params_t* easycache_params);
+SD_API void sd_chroma_cache_params_init(sd_chroma_cache_params_t* chroma_cache_params);
 
 SD_API void sd_ctx_params_init(sd_ctx_params_t* sd_ctx_params);
 SD_API char* sd_ctx_params_to_str(const sd_ctx_params_t* sd_ctx_params);

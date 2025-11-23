@@ -12,6 +12,7 @@
 #include "denoiser.hpp"
 #include "diffusion_model.hpp"
 #include "easycache.hpp"
+#include "chromacache.hpp"
 #include "esrgan.hpp"
 #include "lora.hpp"
 #include "pmid.hpp"
@@ -1517,12 +1518,13 @@ public:
                         const std::vector<float>& sigmas,
                         int start_merge_step,
                         SDCondition id_cond,
-                        std::vector<ggml_tensor*> ref_latents         = {},
-                        bool increase_ref_index                       = false,
-                        ggml_tensor* denoise_mask                     = nullptr,
-                        ggml_tensor* vace_context                     = nullptr,
-                        float vace_strength                           = 1.f,
-                        const sd_easycache_params_t* easycache_params = nullptr) {
+                        std::vector<ggml_tensor*> ref_latents                 = {},
+                        bool increase_ref_index                               = false,
+                        ggml_tensor* denoise_mask                             = nullptr,
+                        ggml_tensor* vace_context                             = nullptr,
+                        float vace_strength                                   = 1.f,
+                        const sd_easycache_params_t* easycache_params         = nullptr,
+                        const sd_chroma_cache_params_t* chroma_cache_params   = nullptr) {
         if (shifted_timestep > 0 && !sd_version_is_sdxl(version)) {
             LOG_WARN("timestep shifting is only supported for SDXL models!");
             shifted_timestep = 0;
@@ -1571,6 +1573,26 @@ public:
                         LOG_WARN("EasyCache requested but could not be initialized for this run");
                     }
                 }
+            }
+        }
+
+        ChromaCacheState chroma_cache_state;
+        bool chroma_cache_enabled = false;
+        if (chroma_cache_params != nullptr && chroma_cache_params->enabled) {
+            ChromaCacheConfig chroma_config;
+            chroma_config.enabled = true;
+            chroma_config.start_percent = chroma_cache_params->start_percent;
+            chroma_config.end_percent   = chroma_cache_params->end_percent;
+            chroma_config.interval      = chroma_cache_params->interval;
+            chroma_cache_state.init(chroma_config, denoiser.get());
+            if (chroma_cache_state.enabled()) {
+                chroma_cache_enabled = true;
+                LOG_INFO("ChromaCache enabled - start_percent: %.2f, end_percent: %.2f, interval: %d",
+                         chroma_config.start_percent,
+                         chroma_config.end_percent,
+                         chroma_config.interval);
+            } else {
+                 LOG_WARN("ChromaCache requested but could not be initialized for this run");
             }
         }
 
@@ -1638,6 +1660,10 @@ public:
         }
 
         auto denoise = [&](ggml_tensor* input, float sigma, int step) -> ggml_tensor* {
+            if (chroma_cache_enabled) {
+                chroma_cache_state.check_cache(sigma);
+            }
+
             auto sd_preview_cb   = sd_get_preview_callback();
             auto sd_preview_mode = sd_get_preview_mode();
             if (step == 1 || step == -1) {
@@ -1746,8 +1772,14 @@ public:
                 active_condition          = &id_cond;
             }
 
+            if (chroma_cache_enabled) {
+                diffusion_params.chroma_cache = &chroma_cache_state;
+            }
+
+            float* negative_data = nullptr;
             bool skip_model = easycache_before_condition(active_condition, *active_output);
             if (!skip_model) {
+                diffusion_params.cache_key = "hidden_states";
                 work_diffusion_model->compute(n_threads,
                                               diffusion_params,
                                               active_output);
@@ -1756,7 +1788,6 @@ public:
 
             bool current_step_skipped = easycache_step_is_skipped();
 
-            float* negative_data = nullptr;
             if (has_unconditioned) {
                 // uncond
                 if (!current_step_skipped && control_hint != nullptr && control_net != nullptr) {
@@ -1770,6 +1801,7 @@ public:
                 diffusion_params.y        = uncond.c_vector;
                 bool skip_uncond          = easycache_before_condition(&uncond, out_uncond);
                 if (!skip_uncond) {
+                    diffusion_params.cache_key = "uncond_hidden_states";
                     work_diffusion_model->compute(n_threads,
                                                   diffusion_params,
                                                   &out_uncond);
@@ -1785,6 +1817,7 @@ public:
                 diffusion_params.y        = img_cond.c_vector;
                 bool skip_img_cond        = easycache_before_condition(&img_cond, out_img_cond);
                 if (!skip_img_cond) {
+                    diffusion_params.cache_key = "img_cond_hidden_states";
                     work_diffusion_model->compute(n_threads,
                                                   diffusion_params,
                                                   &out_img_cond);
@@ -1804,6 +1837,7 @@ public:
                     diffusion_params.c_concat    = cond.c_concat;
                     diffusion_params.y           = cond.c_vector;
                     diffusion_params.skip_layers = skip_layers;
+                    diffusion_params.cache_key   = "skip_hidden_states";
                     work_diffusion_model->compute(n_threads,
                                                   diffusion_params,
                                                   &out_skip);
@@ -2445,6 +2479,14 @@ void sd_easycache_params_init(sd_easycache_params_t* easycache_params) {
     easycache_params->end_percent     = 0.95f;
 }
 
+void sd_chroma_cache_params_init(sd_chroma_cache_params_t* chroma_cache_params) {
+    *chroma_cache_params               = {};
+    chroma_cache_params->enabled       = false;
+    chroma_cache_params->start_percent = 0.3f;
+    chroma_cache_params->end_percent   = 1.0f;
+    chroma_cache_params->interval      = 4;
+}
+
 void sd_ctx_params_init(sd_ctx_params_t* sd_ctx_params) {
     *sd_ctx_params                         = {};
     sd_ctx_params->vae_decode_only         = true;
@@ -2607,6 +2649,7 @@ void sd_img_gen_params_init(sd_img_gen_params_t* sd_img_gen_params) {
     sd_img_gen_params->pm_params         = {nullptr, 0, nullptr, 20.f};
     sd_img_gen_params->vae_tiling_params = {false, 0, 0, 0.5f, 0.0f, 0.0f};
     sd_easycache_params_init(&sd_img_gen_params->easycache);
+    sd_chroma_cache_params_init(&sd_img_gen_params->chroma_cache);
 }
 
 char* sd_img_gen_params_to_str(const sd_img_gen_params_t* sd_img_gen_params) {
@@ -2656,6 +2699,12 @@ char* sd_img_gen_params_to_str(const sd_img_gen_params_t* sd_img_gen_params) {
              sd_img_gen_params->easycache.reuse_threshold,
              sd_img_gen_params->easycache.start_percent,
              sd_img_gen_params->easycache.end_percent);
+    snprintf(buf + strlen(buf), 4096 - strlen(buf),
+             "chroma_cache: %s (start=%.2f, end=%.2f, interval=%d)\n",
+             sd_img_gen_params->chroma_cache.enabled ? "enabled" : "disabled",
+             sd_img_gen_params->chroma_cache.start_percent,
+             sd_img_gen_params->chroma_cache.end_percent,
+             sd_img_gen_params->chroma_cache.interval);
     free(sample_params_str);
     return buf;
 }
@@ -2673,6 +2722,7 @@ void sd_vid_gen_params_init(sd_vid_gen_params_t* sd_vid_gen_params) {
     sd_vid_gen_params->moe_boundary                          = 0.875f;
     sd_vid_gen_params->vace_strength                         = 1.f;
     sd_easycache_params_init(&sd_vid_gen_params->easycache);
+    sd_chroma_cache_params_init(&sd_vid_gen_params->chroma_cache);
 }
 
 struct sd_ctx_t {
@@ -2784,9 +2834,10 @@ sd_image_t* generate_image_internal(sd_ctx_t* sd_ctx,
                                     std::vector<sd_image_t*> ref_images,
                                     std::vector<ggml_tensor*> ref_latents,
                                     bool increase_ref_index,
-                                    ggml_tensor* concat_latent                    = nullptr,
-                                    ggml_tensor* denoise_mask                     = nullptr,
-                                    const sd_easycache_params_t* easycache_params = nullptr) {
+                                    ggml_tensor* concat_latent                            = nullptr,
+                                    ggml_tensor* denoise_mask                             = nullptr,
+                                    const sd_easycache_params_t* easycache_params         = nullptr,
+                                    const sd_chroma_cache_params_t* chroma_cache_params   = nullptr) {
     if (seed < 0) {
         // Generally, when using the provided command line, the seed is always >0.
         // However, to prevent potential issues if 'stable-diffusion.cpp' is invoked as a library
@@ -3078,7 +3129,8 @@ sd_image_t* generate_image_internal(sd_ctx_t* sd_ctx,
                                                      denoise_mask,
                                                      nullptr,
                                                      1.0f,
-                                                     easycache_params);
+                                                     easycache_params,
+                                                     chroma_cache_params);
         // print_ggml_tensor(x_0);
         int64_t sampling_end = ggml_time_ms();
         LOG_INFO("sampling completed, taking %.2fs", (sampling_end - sampling_start) * 1.0f / 1000);
@@ -3398,7 +3450,8 @@ sd_image_t* generate_image(sd_ctx_t* sd_ctx, const sd_img_gen_params_t* sd_img_g
                                                             sd_img_gen_params->increase_ref_index,
                                                             concat_latent,
                                                             denoise_mask,
-                                                        &sd_img_gen_params->easycache);
+                                                        &sd_img_gen_params->easycache,
+                                                        &sd_img_gen_params->chroma_cache);
 
         size_t t2 = ggml_time_ms();
 
@@ -3744,7 +3797,8 @@ SD_API sd_image_t* generate_video(sd_ctx_t* sd_ctx, const sd_vid_gen_params_t* s
                                      denoise_mask,
                                      vace_context,
                                      sd_vid_gen_params->vace_strength,
-                                 &sd_vid_gen_params->easycache);
+                                 &sd_vid_gen_params->easycache,
+                                 &sd_vid_gen_params->chroma_cache);
 
             int64_t sampling_end = ggml_time_ms();
             LOG_INFO("sampling(high noise) completed, taking %.2fs", (sampling_end - sampling_start) * 1.0f / 1000);
@@ -3782,7 +3836,8 @@ SD_API sd_image_t* generate_video(sd_ctx_t* sd_ctx, const sd_vid_gen_params_t* s
                                               denoise_mask,
                                               vace_context,
                                               sd_vid_gen_params->vace_strength,
-                                          &sd_vid_gen_params->easycache);
+                                          &sd_vid_gen_params->easycache,
+                                          &sd_vid_gen_params->chroma_cache);
 
             int64_t sampling_end = ggml_time_ms();
             LOG_INFO("sampling completed, taking %.2fs", (sampling_end - sampling_start) * 1.0f / 1000);

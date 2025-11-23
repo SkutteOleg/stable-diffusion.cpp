@@ -816,15 +816,21 @@ namespace Flux {
             return x;
         }
 
-        struct ggml_tensor* forward_orig(GGMLRunnerContext* ctx,
-                                         struct ggml_tensor* img,
-                                         struct ggml_tensor* txt,
-                                         struct ggml_tensor* timesteps,
-                                         struct ggml_tensor* y,
-                                         struct ggml_tensor* guidance,
-                                         struct ggml_tensor* pe,
-                                         struct ggml_tensor* mod_index_arange = nullptr,
-                                         std::vector<int> skip_layers         = {}) {
+        struct FluxForwardResult {
+            ggml_tensor* out;
+            ggml_tensor* hidden_state;
+        };
+
+        FluxForwardResult forward_orig(GGMLRunnerContext* ctx,
+                                       struct ggml_tensor* img,
+                                       struct ggml_tensor* txt,
+                                       struct ggml_tensor* timesteps,
+                                       struct ggml_tensor* y,
+                                       struct ggml_tensor* guidance,
+                                       struct ggml_tensor* pe,
+                                       struct ggml_tensor* mod_index_arange = nullptr,
+                                       std::vector<int> skip_layers         = {},
+                                       struct ggml_tensor* cached_hidden    = nullptr) {
             auto img_in      = std::dynamic_pointer_cast<Linear>(blocks["img_in"]);
             auto txt_in      = std::dynamic_pointer_cast<Linear>(blocks["txt_in"]);
             auto final_layer = std::dynamic_pointer_cast<LastLayer>(blocks["final_layer"]);
@@ -875,60 +881,66 @@ namespace Flux {
                 vec = ggml_add(ctx->ggml_ctx, vec, vector_in->forward(ctx, y));
             }
 
-            txt = txt_in->forward(ctx, txt);
+            if (cached_hidden != nullptr) {
+                img = cached_hidden;
+            } else {
+                txt = txt_in->forward(ctx, txt);
 
-            for (int i = 0; i < params.depth; i++) {
-                if (skip_layers.size() > 0 && std::find(skip_layers.begin(), skip_layers.end(), i) != skip_layers.end()) {
-                    continue;
+                for (int i = 0; i < params.depth; i++) {
+                    if (skip_layers.size() > 0 && std::find(skip_layers.begin(), skip_layers.end(), i) != skip_layers.end()) {
+                        continue;
+                    }
+
+                    auto block = std::dynamic_pointer_cast<DoubleStreamBlock>(blocks["double_blocks." + std::to_string(i)]);
+
+                    auto img_txt = block->forward(ctx, img, txt, vec, pe, txt_img_mask);
+                    img          = img_txt.first;   // [N, n_img_token, hidden_size]
+                    txt          = img_txt.second;  // [N, n_txt_token, hidden_size]
                 }
 
-                auto block = std::dynamic_pointer_cast<DoubleStreamBlock>(blocks["double_blocks." + std::to_string(i)]);
+                auto txt_img = ggml_concat(ctx->ggml_ctx, txt, img, 1);  // [N, n_txt_token + n_img_token, hidden_size]
+                for (int i = 0; i < params.depth_single_blocks; i++) {
+                    if (skip_layers.size() > 0 && std::find(skip_layers.begin(), skip_layers.end(), i + params.depth) != skip_layers.end()) {
+                        continue;
+                    }
+                    auto block = std::dynamic_pointer_cast<SingleStreamBlock>(blocks["single_blocks." + std::to_string(i)]);
 
-                auto img_txt = block->forward(ctx, img, txt, vec, pe, txt_img_mask);
-                img          = img_txt.first;   // [N, n_img_token, hidden_size]
-                txt          = img_txt.second;  // [N, n_txt_token, hidden_size]
-            }
-
-            auto txt_img = ggml_concat(ctx->ggml_ctx, txt, img, 1);  // [N, n_txt_token + n_img_token, hidden_size]
-            for (int i = 0; i < params.depth_single_blocks; i++) {
-                if (skip_layers.size() > 0 && std::find(skip_layers.begin(), skip_layers.end(), i + params.depth) != skip_layers.end()) {
-                    continue;
+                    txt_img = block->forward(ctx, txt_img, vec, pe, txt_img_mask);
                 }
-                auto block = std::dynamic_pointer_cast<SingleStreamBlock>(blocks["single_blocks." + std::to_string(i)]);
 
-                txt_img = block->forward(ctx, txt_img, vec, pe, txt_img_mask);
+                txt_img = ggml_cont(ctx->ggml_ctx, ggml_permute(ctx->ggml_ctx, txt_img, 0, 2, 1, 3));  // [n_txt_token + n_img_token, N, hidden_size]
+                img     = ggml_view_3d(ctx->ggml_ctx,
+                                       txt_img,
+                                       txt_img->ne[0],
+                                       txt_img->ne[1],
+                                       img->ne[1],
+                                       txt_img->nb[1],
+                                       txt_img->nb[2],
+                                       txt_img->nb[2] * txt->ne[1]);                               // [n_img_token, N, hidden_size]
+                img     = ggml_cont(ctx->ggml_ctx, ggml_permute(ctx->ggml_ctx, img, 0, 2, 1, 3));  // [N, n_img_token, hidden_size]
             }
 
-            txt_img = ggml_cont(ctx->ggml_ctx, ggml_permute(ctx->ggml_ctx, txt_img, 0, 2, 1, 3));  // [n_txt_token + n_img_token, N, hidden_size]
-            img     = ggml_view_3d(ctx->ggml_ctx,
-                                   txt_img,
-                                   txt_img->ne[0],
-                                   txt_img->ne[1],
-                                   img->ne[1],
-                                   txt_img->nb[1],
-                                   txt_img->nb[2],
-                                   txt_img->nb[2] * txt->ne[1]);                               // [n_img_token, N, hidden_size]
-            img     = ggml_cont(ctx->ggml_ctx, ggml_permute(ctx->ggml_ctx, img, 0, 2, 1, 3));  // [N, n_img_token, hidden_size]
+            ggml_tensor* hidden_state_out = img;
 
             if (final_layer) {
                 img = final_layer->forward(ctx, img, vec);  // (N, T, patch_size ** 2 * out_channels)
             }
 
-            return img;
+            return {img, hidden_state_out};
         }
 
-        struct ggml_tensor* forward_chroma_radiance(GGMLRunnerContext* ctx,
-                                                    struct ggml_tensor* x,
-                                                    struct ggml_tensor* timestep,
-                                                    struct ggml_tensor* context,
-                                                    struct ggml_tensor* c_concat,
-                                                    struct ggml_tensor* y,
-                                                    struct ggml_tensor* guidance,
-                                                    struct ggml_tensor* pe,
-                                                    struct ggml_tensor* mod_index_arange  = nullptr,
-                                                    struct ggml_tensor* dct               = nullptr,
-                                                    std::vector<ggml_tensor*> ref_latents = {},
-                                                    std::vector<int> skip_layers          = {}) {
+        FluxForwardResult forward_chroma_radiance(GGMLRunnerContext* ctx,
+                                                  struct ggml_tensor* x,
+                                                  struct ggml_tensor* timestep,
+                                                  struct ggml_tensor* context,
+                                                  struct ggml_tensor* c_concat,
+                                                  struct ggml_tensor* y,
+                                                  struct ggml_tensor* guidance,
+                                                  struct ggml_tensor* pe,
+                                                  struct ggml_tensor* mod_index_arange  = nullptr,
+                                                  struct ggml_tensor* dct               = nullptr,
+                                                  std::vector<ggml_tensor*> ref_latents = {},
+                                                  std::vector<int> skip_layers          = {}) {
             GGML_ASSERT(x->ne[3] == 1);
 
             int64_t W          = x->ne[0];
@@ -947,7 +959,8 @@ namespace Flux {
             img = ggml_reshape_3d(ctx->ggml_ctx, img, img->ne[0] * img->ne[1], img->ne[2], img->ne[3]);  // [N, hidden_size, H/patch_size*W/patch_size]
             img = ggml_cont(ctx->ggml_ctx, ggml_ext_torch_permute(ctx->ggml_ctx, img, 1, 0, 2, 3));      // [N, H/patch_size*W/patch_size, hidden_size]
 
-            auto out = forward_orig(ctx, img, context, timestep, y, guidance, pe, mod_index_arange, skip_layers);  // [N, n_img_token, hidden_size]
+            auto out_res = forward_orig(ctx, img, context, timestep, y, guidance, pe, mod_index_arange, skip_layers);  // [N, n_img_token, hidden_size]
+            auto out     = out_res.out;
 
             // nerf decode
             auto nerf_image_embedder   = std::dynamic_pointer_cast<NerfEmbedder>(blocks["nerf_image_embedder"]);
@@ -977,21 +990,22 @@ namespace Flux {
 
             out = nerf_final_layer_conv->forward(ctx, img_dct);  // [N, C, H, W]
 
-            return out;
+            return {out, out_res.hidden_state};
         }
 
-        struct ggml_tensor* forward_flux_chroma(GGMLRunnerContext* ctx,
-                                                struct ggml_tensor* x,
-                                                struct ggml_tensor* timestep,
-                                                struct ggml_tensor* context,
-                                                struct ggml_tensor* c_concat,
-                                                struct ggml_tensor* y,
-                                                struct ggml_tensor* guidance,
-                                                struct ggml_tensor* pe,
-                                                struct ggml_tensor* mod_index_arange  = nullptr,
-                                                struct ggml_tensor* dct               = nullptr,
-                                                std::vector<ggml_tensor*> ref_latents = {},
-                                                std::vector<int> skip_layers          = {}) {
+        FluxForwardResult forward_flux_chroma(GGMLRunnerContext* ctx,
+                                              struct ggml_tensor* x,
+                                              struct ggml_tensor* timestep,
+                                              struct ggml_tensor* context,
+                                              struct ggml_tensor* c_concat,
+                                              struct ggml_tensor* y,
+                                              struct ggml_tensor* guidance,
+                                              struct ggml_tensor* pe,
+                                              struct ggml_tensor* mod_index_arange  = nullptr,
+                                              struct ggml_tensor* dct               = nullptr,
+                                              std::vector<ggml_tensor*> ref_latents = {},
+                                              std::vector<int> skip_layers          = {},
+                                              struct ggml_tensor* cached_hidden     = nullptr) {
             GGML_ASSERT(x->ne[3] == 1);
 
             int64_t W          = x->ne[0];
@@ -1038,7 +1052,8 @@ namespace Flux {
                 }
             }
 
-            auto out = forward_orig(ctx, img, context, timestep, y, guidance, pe, mod_index_arange, skip_layers);  // [N, num_tokens, C * patch_size * patch_size]
+            auto out_res = forward_orig(ctx, img, context, timestep, y, guidance, pe, mod_index_arange, skip_layers, cached_hidden);  // [N, num_tokens, C * patch_size * patch_size]
+            auto out     = out_res.out;
 
             if (out->ne[1] > img_tokens) {
                 out = ggml_cont(ctx->ggml_ctx, ggml_permute(ctx->ggml_ctx, out, 0, 2, 1, 3));  // [num_tokens, N, C * patch_size * patch_size]
@@ -1048,21 +1063,22 @@ namespace Flux {
 
             // rearrange(out, "b (h w) (c ph pw) -> b c (h ph) (w pw)", h=h_len, w=w_len, ph=2, pw=2)
             out = unpatchify(ctx->ggml_ctx, out, (H + pad_h) / patch_size, (W + pad_w) / patch_size);  // [N, C, H + pad_h, W + pad_w]
-            return out;
+            return {out, out_res.hidden_state};
         }
 
-        struct ggml_tensor* forward(GGMLRunnerContext* ctx,
-                                    struct ggml_tensor* x,
-                                    struct ggml_tensor* timestep,
-                                    struct ggml_tensor* context,
-                                    struct ggml_tensor* c_concat,
-                                    struct ggml_tensor* y,
-                                    struct ggml_tensor* guidance,
-                                    struct ggml_tensor* pe,
-                                    struct ggml_tensor* mod_index_arange  = nullptr,
-                                    struct ggml_tensor* dct               = nullptr,
-                                    std::vector<ggml_tensor*> ref_latents = {},
-                                    std::vector<int> skip_layers          = {}) {
+        FluxForwardResult forward(GGMLRunnerContext* ctx,
+                                  struct ggml_tensor* x,
+                                  struct ggml_tensor* timestep,
+                                  struct ggml_tensor* context,
+                                  struct ggml_tensor* c_concat,
+                                  struct ggml_tensor* y,
+                                  struct ggml_tensor* guidance,
+                                  struct ggml_tensor* pe,
+                                  struct ggml_tensor* mod_index_arange  = nullptr,
+                                  struct ggml_tensor* dct               = nullptr,
+                                  std::vector<ggml_tensor*> ref_latents = {},
+                                  std::vector<int> skip_layers          = {},
+                                  struct ggml_tensor* cached_hidden     = nullptr) {
             // Forward pass of DiT.
             // x: (N, C, H, W) tensor of spatial inputs (images or latent representations of images)
             // timestep: (N,) tensor of diffusion timesteps
@@ -1098,7 +1114,8 @@ namespace Flux {
                                            mod_index_arange,
                                            dct,
                                            ref_latents,
-                                           skip_layers);
+                                           skip_layers,
+                                           cached_hidden);
             }
         }
     };
@@ -1241,7 +1258,9 @@ namespace Flux {
                                         struct ggml_tensor* guidance,
                                         std::vector<ggml_tensor*> ref_latents = {},
                                         bool increase_ref_index               = false,
-                                        std::vector<int> skip_layers          = {}) {
+                                        std::vector<int> skip_layers          = {},
+                                        ChromaCacheState* chroma_cache        = nullptr,
+                                        std::string cache_key                 = "") {
             GGML_ASSERT(x->ne[3] == 1);
             struct ggml_cgraph* gf = new_graph_custom(FLUX_GRAPH_SIZE);
 
@@ -1305,20 +1324,38 @@ namespace Flux {
 
             auto runner_ctx = get_context();
 
-            struct ggml_tensor* out = flux.forward(&runner_ctx,
-                                                   x,
-                                                   timesteps,
-                                                   context,
-                                                   c_concat,
-                                                   y,
-                                                   guidance,
-                                                   pe,
-                                                   mod_index_arange,
-                                                   dct,
-                                                   ref_latents,
-                                                   skip_layers);
+            ggml_tensor* cached_hidden = nullptr;
+            if (chroma_cache && chroma_cache->enabled() && !cache_key.empty()) {
+                if (chroma_cache->use_cache) {
+                    cached_hidden = get_cache_tensor_by_name(cache_key);
+                    // If cached tensor is on different backend context (cache_ctx), 
+                    // we can still use it in graph if backend allows.
+                    // GGMLRunner manages cache_buffer on runtime_backend.
+                    // So it should be compatible.
+                }
+            }
 
-            ggml_build_forward_expand(gf, out);
+            Flux::FluxForwardResult result = flux.forward(&runner_ctx,
+                                                          x,
+                                                          timesteps,
+                                                          context,
+                                                          c_concat,
+                                                          y,
+                                                          guidance,
+                                                          pe,
+                                                          mod_index_arange,
+                                                          dct,
+                                                          ref_latents,
+                                                          skip_layers,
+                                                          cached_hidden);
+
+            ggml_build_forward_expand(gf, result.out);
+
+            if (chroma_cache && chroma_cache->enabled() && !cache_key.empty() && !chroma_cache->use_cache) {
+                if (result.hidden_state) {
+                    cache(cache_key, result.hidden_state);
+                }
+            }
 
             return gf;
         }
@@ -1334,17 +1371,28 @@ namespace Flux {
                      bool increase_ref_index               = false,
                      struct ggml_tensor** output           = nullptr,
                      struct ggml_context* output_ctx       = nullptr,
-                     std::vector<int> skip_layers          = std::vector<int>()) {
+                     std::vector<int> skip_layers          = std::vector<int>(),
+                     ChromaCacheState* chroma_cache        = nullptr,
+                     std::string cache_key                 = "") {
             // x: [N, in_channels, h, w]
             // timesteps: [N, ]
             // context: [N, max_position, hidden_size]
             // y: [N, adm_in_channels] or [1, adm_in_channels]
             // guidance: [N, ]
             auto get_graph = [&]() -> struct ggml_cgraph* {
-                return build_graph(x, timesteps, context, c_concat, y, guidance, ref_latents, increase_ref_index, skip_layers);
+                return build_graph(x, timesteps, context, c_concat, y, guidance, ref_latents, increase_ref_index, skip_layers, chroma_cache, cache_key);
             };
 
             GGMLRunner::compute(get_graph, n_threads, false, output, output_ctx);
+
+            if (chroma_cache && chroma_cache->enabled() && !cache_key.empty()) {
+                // Sync ChromaCacheState buffer map with GGMLRunner cache
+                // Because GGMLRunner may have relocated tensors to cache_ctx
+                ggml_tensor* t = get_cache_tensor_by_name(cache_key);
+                if (t) {
+                    chroma_cache->set_buffer(cache_key, t);
+                }
+            }
         }
 
         void test() {

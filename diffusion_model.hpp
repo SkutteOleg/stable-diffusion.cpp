@@ -1,6 +1,7 @@
 #ifndef __DIFFUSION_MODEL_H__
 #define __DIFFUSION_MODEL_H__
 
+#include "chromacache.hpp"
 #include "flux.hpp"
 #include "mmdit.hpp"
 #include "qwen_image.hpp"
@@ -22,6 +23,8 @@ struct DiffusionParams {
     struct ggml_tensor* vace_context          = nullptr;
     float vace_strength                       = 1.f;
     std::vector<int> skip_layers              = {};
+    ChromaCacheState* chroma_cache            = nullptr;
+    std::string cache_key                     = "";
 };
 
 struct DiffusionModel {
@@ -224,7 +227,9 @@ struct FluxModel : public DiffusionModel {
                             diffusion_params.increase_ref_index,
                             output,
                             output_ctx,
-                            diffusion_params.skip_layers);
+                            diffusion_params.skip_layers,
+                            diffusion_params.chroma_cache,
+                            diffusion_params.cache_key);
     }
 };
 

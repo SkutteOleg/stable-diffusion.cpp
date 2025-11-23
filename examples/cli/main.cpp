@@ -109,6 +109,9 @@ struct SDParams {
     std::string easycache_option;
     sd_easycache_params_t easycache_params;
 
+    std::string chroma_cache_option;
+    sd_chroma_cache_params_t chroma_cache_params;
+
     float moe_boundary  = 0.875f;
     int video_frames    = 1;
     int fps             = 16;
@@ -159,6 +162,7 @@ struct SDParams {
         sd_sample_params_init(&high_noise_sample_params);
         high_noise_sample_params.sample_steps = -1;
         sd_easycache_params_init(&easycache_params);
+        sd_chroma_cache_params_init(&chroma_cache_params);
     }
 };
 
@@ -235,6 +239,11 @@ void print_params(SDParams params) {
            params.easycache_params.reuse_threshold,
            params.easycache_params.start_percent,
            params.easycache_params.end_percent);
+    printf("    chroma_cache:                      %s (start=%.2f, end=%.2f, interval=%d)\n",
+           params.chroma_cache_params.enabled ? "enabled" : "disabled",
+           params.chroma_cache_params.start_percent,
+           params.chroma_cache_params.end_percent,
+           params.chroma_cache_params.interval);
     printf("    vace_strength:                     %.2f\n", params.vace_strength);
     printf("    fps:                               %d\n", params.fps);
     printf("    preview_mode:                      %s (%s)\n", previews_str[params.preview_method], params.preview_noisy ? "noisy" : "denoised");
@@ -1157,6 +1166,38 @@ void parse_args(int argc, const char** argv, SDParams& params) {
         return consumed;
     };
 
+    auto on_chroma_cache_arg = [&](int argc, const char** argv, int index) {
+        const std::string default_values = "0.3,1.0,4";
+        auto looks_like_value            = [](const std::string& token) {
+            if (token.empty()) {
+                return false;
+            }
+            if (token[0] != '-') {
+                return true;
+            }
+            if (token.size() == 1) {
+                return false;
+            }
+            unsigned char next = static_cast<unsigned char>(token[1]);
+            return std::isdigit(next) || token[1] == '.';
+        };
+
+        std::string option_value;
+        int consumed = 0;
+        if (index + 1 < argc) {
+            std::string next_arg = argv[index + 1];
+            if (looks_like_value(next_arg)) {
+                option_value = argv_to_utf8(index + 1, argv);
+                consumed     = 1;
+            }
+        }
+        if (option_value.empty()) {
+            option_value = default_values;
+        }
+        params.chroma_cache_option = option_value;
+        return consumed;
+    };
+
     options.manual_options = {
         {"-M",
          "--mode",
@@ -1237,6 +1278,10 @@ void parse_args(int argc, const char** argv, SDParams& params) {
          "--easycache",
          "enable EasyCache for DiT models with optional \"threshold,start_percent,end_percent\" (default: 0.2,0.15,0.95)",
          on_easycache_arg},
+        {"",
+         "--chroma-cache",
+         "enable ChromaCache for DiT models with optional \"start_percent,end_percent,interval\" (default: 0.3,1.0,4)",
+         on_chroma_cache_arg},
     };
 
     if (!parse_options(argc, argv, options)) {
@@ -1295,6 +1340,59 @@ void parse_args(int argc, const char** argv, SDParams& params) {
         params.easycache_params.end_percent     = values[2];
     } else {
         params.easycache_params.enabled = false;
+    }
+
+    if (!params.chroma_cache_option.empty()) {
+        float values[3] = {0.0f, 0.0f, 0.0f};
+        std::stringstream ss(params.chroma_cache_option);
+        std::string token;
+        int idx = 0;
+        while (std::getline(ss, token, ',')) {
+            auto trim = [](std::string& s) {
+                const char* whitespace = " \t\r\n";
+                auto start             = s.find_first_not_of(whitespace);
+                if (start == std::string::npos) {
+                    s.clear();
+                    return;
+                }
+                auto end = s.find_last_not_of(whitespace);
+                s        = s.substr(start, end - start + 1);
+            };
+            trim(token);
+            if (token.empty()) {
+                fprintf(stderr, "error: invalid chroma_cache option '%s'\\n", params.chroma_cache_option.c_str());
+                exit(1);
+            }
+            if (idx >= 3) {
+                fprintf(stderr, "error: chroma_cache expects exactly 3 comma-separated values (start,end,interval)\\n");
+                exit(1);
+            }
+            try {
+                values[idx] = std::stof(token);
+            } catch (const std::exception&) {
+                fprintf(stderr, "error: invalid chroma_cache value '%s'\\n", token.c_str());
+                exit(1);
+            }
+            idx++;
+        }
+        if (idx != 3) {
+            fprintf(stderr, "error: chroma_cache expects exactly 3 comma-separated values (start,end,interval)\\n");
+            exit(1);
+        }
+        if (values[0] < 0.0f || values[0] >= 1.0f || values[1] <= 0.0f || values[1] > 1.0f || values[0] >= values[1]) {
+            fprintf(stderr, "error: chroma_cache start/end percents must satisfy 0.0 <= start < end <= 1.0\\n");
+            exit(1);
+        }
+        if (values[2] < 1.0f) {
+            fprintf(stderr, "error: chroma_cache interval must be >= 1\\n");
+            exit(1);
+        }
+        params.chroma_cache_params.enabled       = true;
+        params.chroma_cache_params.start_percent = values[0];
+        params.chroma_cache_params.end_percent   = values[1];
+        params.chroma_cache_params.interval      = (int)values[2];
+    } else {
+        params.chroma_cache_params.enabled = false;
     }
 
     if (params.n_threads <= 0) {
@@ -1942,6 +2040,7 @@ int main(int argc, const char* argv[]) {
                 },  // pm_params
                 params.vae_tiling_params,
                 params.easycache_params,
+                params.chroma_cache_params,
             };
 
             results     = generate_image(sd_ctx, &img_gen_params);
@@ -1965,6 +2064,7 @@ int main(int argc, const char* argv[]) {
                 params.video_frames,
                 params.vace_strength,
                 params.easycache_params,
+                params.chroma_cache_params,
             };
 
             results = generate_video(sd_ctx, &vid_gen_params, &num_results);

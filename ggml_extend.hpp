@@ -1701,6 +1701,10 @@ protected:
             auto tensor = kv.first;
             auto data   = kv.second;
 
+            if (tensor->buffer == nullptr && (tensor->view_src == nullptr || tensor->view_src->buffer == nullptr)) {
+                continue;
+            }
+
             ggml_backend_tensor_set(tensor, data, 0, ggml_nbytes(tensor));
         }
 
