@@ -232,6 +232,7 @@ typedef struct {
 
 typedef struct {
     bool enabled;
+    bool is_lazy;
     float reuse_threshold;
     float start_percent;
     float end_percent;

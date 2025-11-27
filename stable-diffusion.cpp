@@ -1547,6 +1547,7 @@ public:
             } else {
                 EasyCacheConfig easycache_config;
                 easycache_config.enabled         = true;
+                easycache_config.is_lazy         = easycache_params->is_lazy;
                 easycache_config.reuse_threshold = std::max(0.0f, easycache_params->reuse_threshold);
                 easycache_config.start_percent   = easycache_params->start_percent;
                 easycache_config.end_percent     = easycache_params->end_percent;
@@ -1563,10 +1564,11 @@ public:
                     easycache_state.init(easycache_config, denoiser.get());
                     if (easycache_state.enabled()) {
                         easycache_enabled = true;
-                        LOG_INFO("EasyCache enabled - threshold: %.3f, start_percent: %.2f, end_percent: %.2f",
+                        LOG_INFO("EasyCache enabled - threshold: %.3f, start_percent: %.2f, end_percent: %.2f, is_lazy: %s",
                                  easycache_config.reuse_threshold,
                                  easycache_config.start_percent,
-                                 easycache_config.end_percent);
+                                 easycache_config.end_percent,
+                                 easycache_config.is_lazy ? "true" : "false");
                     } else {
                         LOG_WARN("EasyCache requested but could not be initialized for this run");
                     }
@@ -2440,6 +2442,7 @@ enum lora_apply_mode_t str_to_lora_apply_mode(const char* str) {
 void sd_easycache_params_init(sd_easycache_params_t* easycache_params) {
     *easycache_params                 = {};
     easycache_params->enabled         = false;
+    easycache_params->is_lazy         = false;
     easycache_params->reuse_threshold = 0.2f;
     easycache_params->start_percent   = 0.15f;
     easycache_params->end_percent     = 0.95f;
@@ -2651,11 +2654,12 @@ char* sd_img_gen_params_to_str(const sd_img_gen_params_t* sd_img_gen_params) {
              SAFE_STR(sd_img_gen_params->pm_params.id_embed_path),
              BOOL_STR(sd_img_gen_params->vae_tiling_params.enabled));
     snprintf(buf + strlen(buf), 4096 - strlen(buf),
-             "easycache: %s (threshold=%.3f, start=%.2f, end=%.2f)\n",
+             "easycache: %s (threshold=%.3f, start=%.2f, end=%.2f, is_lazy=%s)\n",
              sd_img_gen_params->easycache.enabled ? "enabled" : "disabled",
              sd_img_gen_params->easycache.reuse_threshold,
              sd_img_gen_params->easycache.start_percent,
-             sd_img_gen_params->easycache.end_percent);
+             sd_img_gen_params->easycache.end_percent,
+             sd_img_gen_params->easycache.is_lazy ? "true" : "false");
     free(sample_params_str);
     return buf;
 }

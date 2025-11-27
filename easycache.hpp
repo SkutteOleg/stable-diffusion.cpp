@@ -8,6 +8,7 @@
 
 struct EasyCacheConfig {
     bool enabled          = false;
+    bool is_lazy          = false;
     float reuse_threshold = 0.2f;
     float start_percent   = 0.15f;
     float end_percent     = 0.95f;
@@ -28,6 +29,9 @@ struct EasyCacheState {
     bool step_active                    = false;
     const SDCondition* anchor_condition = nullptr;
     std::unordered_map<const SDCondition*, EasyCacheCacheEntry> cache_diffs;
+    std::vector<EasyCacheCacheEntry> lazy_cache_diffs;
+    int current_sub_step_index = 0;
+
     std::vector<float> prev_input;
     std::vector<float> prev_output;
     float output_prev_norm                = 0.0f;
@@ -48,6 +52,8 @@ struct EasyCacheState {
         step_active       = false;
         anchor_condition  = nullptr;
         cache_diffs.clear();
+        lazy_cache_diffs.clear();
+        current_sub_step_index = 0;
         prev_input.clear();
         prev_output.clear();
         output_prev_norm                 = 0.0f;
@@ -99,10 +105,11 @@ struct EasyCacheState {
         if (step_index == current_step_index) {
             return;
         }
-        current_step_index    = step_index;
-        skip_current_step     = false;
-        has_last_input_change = false;
-        step_active           = false;
+        current_step_index     = step_index;
+        current_sub_step_index = 0;
+        skip_current_step      = false;
+        has_last_input_change  = false;
+        step_active            = false;
         if (sigma > start_sigma) {
             return;
         }
@@ -121,31 +128,54 @@ struct EasyCacheState {
     }
 
     bool has_cache(const SDCondition* cond) const {
+        if (config.is_lazy) {
+            return current_sub_step_index < (int)lazy_cache_diffs.size() && !lazy_cache_diffs[current_sub_step_index].diff.empty();
+        }
         auto it = cache_diffs.find(cond);
         return it != cache_diffs.end() && !it->second.diff.empty();
     }
 
     void update_cache(const SDCondition* cond, ggml_tensor* input, ggml_tensor* output) {
-        EasyCacheCacheEntry& entry = cache_diffs[cond];
-        size_t ne                  = static_cast<size_t>(ggml_nelements(output));
-        entry.diff.resize(ne);
+        EasyCacheCacheEntry* entry = nullptr;
+        if (config.is_lazy) {
+            if (current_sub_step_index >= (int)lazy_cache_diffs.size()) {
+                lazy_cache_diffs.resize(current_sub_step_index + 1);
+            }
+            entry = &lazy_cache_diffs[current_sub_step_index];
+        } else {
+            entry = &cache_diffs[cond];
+        }
+
+        size_t ne = static_cast<size_t>(ggml_nelements(output));
+        entry->diff.resize(ne);
         float* out_data = (float*)output->data;
         float* in_data  = (float*)input->data;
         for (size_t i = 0; i < ne; ++i) {
-            entry.diff[i] = out_data[i] - in_data[i];
+            entry->diff[i] = out_data[i] - in_data[i];
         }
     }
 
     void apply_cache(const SDCondition* cond, ggml_tensor* input, ggml_tensor* output) {
-        auto it = cache_diffs.find(cond);
-        if (it == cache_diffs.end() || it->second.diff.empty()) {
+        const std::vector<float>* diff = nullptr;
+        if (config.is_lazy) {
+            if (current_sub_step_index < (int)lazy_cache_diffs.size()) {
+                diff = &lazy_cache_diffs[current_sub_step_index].diff;
+            }
+        } else {
+            auto it = cache_diffs.find(cond);
+            if (it != cache_diffs.end()) {
+                diff = &it->second.diff;
+            }
+        }
+
+        if (diff == nullptr || diff->empty()) {
             return;
         }
+
         copy_ggml_tensor(output, input);
-        float* out_data                = (float*)output->data;
-        const std::vector<float>& diff = it->second.diff;
-        for (size_t i = 0; i < diff.size(); ++i) {
-            out_data[i] += diff[i];
+        float* out_data = (float*)output->data;
+        for (size_t i = 0; i < diff->size(); ++i) {
+            out_data[i] += (*diff)[i];
         }
     }
 
@@ -163,14 +193,24 @@ struct EasyCacheState {
         if (!step_active) {
             return false;
         }
-        if (initial_step) {
-            anchor_condition = cond;
-            initial_step     = false;
+
+        bool is_anchor = false;
+        if (config.is_lazy) {
+            is_anchor = (current_sub_step_index == 0);
+        } else {
+            if (initial_step) {
+                anchor_condition = cond;
+                initial_step     = false;
+            }
+            is_anchor = (cond == anchor_condition);
         }
-        bool is_anchor = (cond == anchor_condition);
+
         if (skip_current_step) {
             if (has_cache(cond)) {
                 apply_cache(cond, input, output);
+                if (config.is_lazy) {
+                    current_sub_step_index++;
+                }
                 return true;
             }
             return false;
@@ -202,6 +242,9 @@ struct EasyCacheState {
                 skip_current_step = true;
                 total_steps_skipped++;
                 apply_cache(cond, input, output);
+                if (config.is_lazy) {
+                    current_sub_step_index++;
+                }
                 return true;
             } else {
                 cumulative_change_rate = 0.0f;
@@ -216,7 +259,16 @@ struct EasyCacheState {
             return;
         }
         update_cache(cond, input, output);
-        if (cond != anchor_condition) {
+
+        bool is_anchor = false;
+        if (config.is_lazy) {
+            is_anchor = (current_sub_step_index == 0);
+            current_sub_step_index++;
+        } else {
+            is_anchor = (cond == anchor_condition);
+        }
+
+        if (!is_anchor) {
             return;
         }
 
