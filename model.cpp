@@ -370,23 +370,36 @@ bool is_safetensors_file(const std::string& file_path) {
     return true;
 }
 
-bool ModelLoader::init_from_file(const std::string& file_path, const std::string& prefix) {
+bool ModelLoader::init_from_file(const std::string& file_path, const std::string& prefix, ggml_type wtype) {
+    size_t start_file_index = file_paths_.size();
+    bool success            = false;
     if (is_directory(file_path)) {
         LOG_INFO("load %s using diffusers format", file_path.c_str());
-        return init_from_diffusers_file(file_path, prefix);
+        success = init_from_diffusers_file(file_path, prefix);
     } else if (is_gguf_file(file_path)) {
         LOG_INFO("load %s using gguf format", file_path.c_str());
-        return init_from_gguf_file(file_path, prefix);
+        success = init_from_gguf_file(file_path, prefix);
     } else if (is_safetensors_file(file_path)) {
         LOG_INFO("load %s using safetensors format", file_path.c_str());
-        return init_from_safetensors_file(file_path, prefix);
+        success = init_from_safetensors_file(file_path, prefix);
     } else if (is_zip_file(file_path)) {
         LOG_INFO("load %s using checkpoint format", file_path.c_str());
-        return init_from_ckpt_file(file_path, prefix);
+        success = init_from_ckpt_file(file_path, prefix);
     } else {
         LOG_WARN("unknown format %s", file_path.c_str());
-        return false;
+        success = false;
     }
+
+    if (success && wtype != GGML_TYPE_COUNT) {
+        for (auto& [name, tensor] : tensor_storage_map) {
+            if (tensor.file_index >= start_file_index) {
+                if (tensor_should_be_converted(tensor, wtype)) {
+                    tensor.expected_type = wtype;
+                }
+            }
+        }
+    }
+    return success;
 }
 
 void ModelLoader::convert_tensors_name() {
@@ -403,11 +416,11 @@ void ModelLoader::convert_tensors_name() {
     tensor_storage_map.swap(new_map);
 }
 
-bool ModelLoader::init_from_file_and_convert_name(const std::string& file_path, const std::string& prefix, SDVersion version) {
+bool ModelLoader::init_from_file_and_convert_name(const std::string& file_path, const std::string& prefix, SDVersion version, ggml_type wtype) {
     if (version_ == VERSION_COUNT && version != VERSION_COUNT) {
         version_ = version;
     }
-    if (!init_from_file(file_path, prefix)) {
+    if (!init_from_file(file_path, prefix, wtype)) {
         return false;
     }
     convert_tensors_name();
@@ -1713,6 +1726,10 @@ bool ModelLoader::save_to_gguf_file(const std::string& file_path, ggml_type type
         ggml_type tensor_type   = tensor_storage.type;
         ggml_type dst_type      = type;
 
+        if (tensor_storage.expected_type != GGML_TYPE_COUNT) {
+            dst_type = tensor_storage.expected_type;
+        }
+
         for (const auto& tensor_type_rule : tensor_type_rules) {
             std::regex pattern(tensor_type_rule.first);
             if (std::regex_search(name, pattern)) {
@@ -1792,6 +1809,30 @@ bool convert(const char* input_path, const char* vae_path, const char* output_pa
             return false;
         }
     }
+    model_loader.convert_tensors_name();
+    bool success = model_loader.save_to_gguf_file(output_path, (ggml_type)output_type, tensor_type_rules);
+    return success;
+}
+
+bool convert_multiple(const char* output_path,
+                      enum sd_type_t output_type,
+                      const char* tensor_type_rules,
+                      const struct sd_model_file_t* model_files,
+                      size_t n_model_files) {
+    ModelLoader model_loader;
+
+    for (size_t i = 0; i < n_model_files; i++) {
+        const auto& model_file = model_files[i];
+        if (model_file.path == nullptr || strlen(model_file.path) == 0) {
+            continue;
+        }
+        std::string prefix = SAFE_STR(model_file.prefix);
+        if (!model_loader.init_from_file(model_file.path, prefix, (ggml_type)model_file.wtype)) {
+            LOG_ERROR("init model loader from file failed: '%s'", model_file.path);
+            return false;
+        }
+    }
+
     model_loader.convert_tensors_name();
     bool success = model_loader.save_to_gguf_file(output_path, (ggml_type)output_type, tensor_type_rules);
     return success;

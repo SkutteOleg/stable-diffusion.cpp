@@ -290,11 +290,12 @@ protected:
     bool init_from_diffusers_file(const std::string& file_path, const std::string& prefix = "");
 
 public:
-    bool init_from_file(const std::string& file_path, const std::string& prefix = "");
+    bool init_from_file(const std::string& file_path, const std::string& prefix = "", ggml_type wtype = GGML_TYPE_COUNT);
     void convert_tensors_name();
     bool init_from_file_and_convert_name(const std::string& file_path,
                                          const std::string& prefix = "",
-                                         SDVersion version         = VERSION_COUNT);
+                                         SDVersion version         = VERSION_COUNT,
+                                         ggml_type wtype           = GGML_TYPE_COUNT);
     SDVersion get_sd_version();
     std::map<ggml_type, uint32_t> get_wtype_stat();
     std::map<ggml_type, uint32_t> get_conditioner_wtype_stat();

@@ -341,11 +341,23 @@ SD_API sd_image_t upscale(upscaler_ctx_t* upscaler_ctx,
 
 SD_API int get_upscale_factor(upscaler_ctx_t* upscaler_ctx);
 
+struct sd_model_file_t {
+    const char* path;
+    const char* prefix;
+    enum sd_type_t wtype;
+};
+
 SD_API bool convert(const char* input_path,
                     const char* vae_path,
                     const char* output_path,
                     enum sd_type_t output_type,
                     const char* tensor_type_rules);
+
+SD_API bool convert_multiple(const char* output_path,
+                             enum sd_type_t output_type,
+                             const char* tensor_type_rules,
+                             const struct sd_model_file_t* model_files,
+                             size_t n_model_files);
 
 SD_API bool preprocess_canny(sd_image_t image,
                              float high_threshold,

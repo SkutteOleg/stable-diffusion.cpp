@@ -1394,6 +1394,22 @@ void parse_args(int argc, const char** argv, SDParams& params) {
     }
 }
 
+static void parse_path_arg(const std::string& arg, std::string& path, sd_type_t& type) {
+    size_t colon_pos = arg.find_last_of(':');
+    if (colon_pos != std::string::npos && colon_pos < arg.length() - 1) {
+        // potential type specifier
+        std::string type_str = arg.substr(colon_pos + 1);
+        // check if type_str is a valid type
+        sd_type_t t = str_to_sd_type(type_str.c_str());
+        if (t != SD_TYPE_COUNT) {
+            type = t;
+            path = arg.substr(0, colon_pos);
+            return;
+        }
+    }
+    path = arg;
+}
+
 static std::string sd_basename(const std::string& path) {
     size_t pos = path.find_last_of('/');
     if (pos != std::string::npos) {
@@ -1686,18 +1702,45 @@ int main(int argc, const char* argv[]) {
     }
 
     if (params.mode == CONVERT) {
-        bool success = convert(params.model_path.c_str(), params.vae_path.c_str(), params.output_path.c_str(), params.wtype, params.tensor_type_rules.c_str());
+        std::vector<sd_model_file_t> model_files;
+        struct model_entry {
+            std::string path;
+            std::string prefix;
+            sd_type_t wtype;
+        };
+        std::vector<model_entry> entries;  // to keep strings alive
+
+        auto add_entry = [&](std::string& raw_path, const std::string& prefix) {
+            if (raw_path.empty()) return;
+            std::string path;
+            sd_type_t type = SD_TYPE_COUNT;
+            parse_path_arg(raw_path, path, type);
+            entries.push_back({path, prefix, type});
+        };
+
+        // Add all possible models
+        add_entry(params.model_path, "");
+        add_entry(params.diffusion_model_path, "model.diffusion_model.");
+        add_entry(params.vae_path, "vae.");
+        add_entry(params.clip_l_path, "text_encoders.clip_l.transformer.");
+        add_entry(params.clip_g_path, "text_encoders.clip_g.transformer.");
+        add_entry(params.t5xxl_path, "text_encoders.t5xxl.transformer.");
+        add_entry(params.llm_path, "text_encoders.llm.");
+        add_entry(params.llm_vision_path, "text_encoders.llm.visual.");
+        add_entry(params.clip_vision_path, "cond_stage_model.transformer.");
+
+        for (const auto& entry : entries) {
+            model_files.push_back({entry.path.c_str(), entry.prefix.c_str(), entry.wtype});
+        }
+
+        bool success = convert_multiple(params.output_path.c_str(), params.wtype, params.tensor_type_rules.c_str(), model_files.data(), model_files.size());
         if (!success) {
             fprintf(stderr,
-                    "convert '%s'/'%s' to '%s' failed\n",
-                    params.model_path.c_str(),
-                    params.vae_path.c_str(),
+                    "convert to '%s' failed\n",
                     params.output_path.c_str());
             return 1;
         } else {
-            printf("convert '%s'/'%s' to '%s' success\n",
-                   params.model_path.c_str(),
-                   params.vae_path.c_str(),
+            printf("convert to '%s' success\n",
                    params.output_path.c_str());
             return 0;
         }
