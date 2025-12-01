@@ -155,21 +155,21 @@ jobs:
       matrix:
         include:
           - build: "noavx"
-            defines: "-DGGML_NATIVE=OFF -DGGML_AVX=OFF -DGGML_AVX2=OFF -DGGML_FMA=OFF -DSD_BUILD_SHARED_LIBS=ON"
+            defines: "-DGGML_NATIVE=OFF -DGGML_AVX=OFF -DGGML_AVX2=OFF -DGGML_AVX512=OFF -DGGML_FMA=OFF -DSD_BUILD_SHARED_LIBS=ON"
           - build: "avx2"
-            defines: "-DGGML_NATIVE=OFF -DGGML_AVX2=ON -DSD_BUILD_SHARED_LIBS=ON"
+            defines: "-DGGML_NATIVE=OFF -DGGML_AVX2=ON -DGGML_AVX512=OFF -DSD_BUILD_SHARED_LIBS=ON"
           - build: "avx"
-            defines: "-DGGML_NATIVE=OFF -DGGML_AVX=ON -DGGML_AVX2=OFF -DSD_BUILD_SHARED_LIBS=ON"
+            defines: "-DGGML_NATIVE=OFF -DGGML_AVX=ON -DGGML_AVX2=OFF -DGGML_AVX512=OFF -DSD_BUILD_SHARED_LIBS=ON"
           - build: "avx512"
             defines: "-DGGML_NATIVE=OFF -DGGML_AVX512=ON -DGGML_AVX=ON -DGGML_AVX2=ON -DSD_BUILD_SHARED_LIBS=ON"
           - build: "cuda12"
-            defines: "-DSD_CUDA=ON -DSD_BUILD_SHARED_LIBS=ON"
+            defines: "-DSD_CUDA=ON -DGGML_AVX512=OFF -DSD_BUILD_SHARED_LIBS=ON"
           - build: "cuda12-noavx"
-            defines: "-DGGML_NATIVE=OFF -DSD_CUDA=ON -DGGML_AVX=OFF -DGGML_AVX2=OFF -DGGML_FMA=OFF -DSD_BUILD_SHARED_LIBS=ON"
+            defines: "-DGGML_NATIVE=OFF -DSD_CUDA=ON -DGGML_AVX=OFF -DGGML_AVX2=OFF -DGGML_AVX512=OFF -DGGML_FMA=OFF -DSD_BUILD_SHARED_LIBS=ON"
           - build: 'vulkan'
-            defines: "-DSD_VULKAN=ON -DSD_BUILD_SHARED_LIBS=ON"
+            defines: "-DSD_VULKAN=ON -DGGML_AVX512=OFF -DSD_BUILD_SHARED_LIBS=ON"
           - build: 'vulkan-noavx'
-            defines: "-DGGML_NATIVE=OFF -DSD_VULKAN=ON -DGGML_AVX=OFF -DGGML_AVX2=OFF -DGGML_FMA=OFF -DSD_BUILD_SHARED_LIBS=ON"
+            defines: "-DGGML_NATIVE=OFF -DSD_VULKAN=ON -DGGML_AVX=OFF -DGGML_AVX2=OFF -DGGML_AVX512=OFF -DGGML_FMA=OFF -DSD_BUILD_SHARED_LIBS=ON"
     steps:
       - name: Clone
         id: checkout
