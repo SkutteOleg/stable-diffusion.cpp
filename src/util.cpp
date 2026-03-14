@@ -27,6 +27,39 @@
 #include "ggml.h"
 #include "stable-diffusion.h"
 
+#ifdef __GNUG__
+#include <cxxabi.h>
+#include <cstdlib>
+#endif
+
+std::string format_exception_details() {
+    std::string msg = "unknown exception";
+    try {
+        throw;
+    } catch (const std::exception& e) {
+        msg += " (std::exception): " + std::string(e.what());
+    } catch (const std::string& e) {
+        msg += " (std::string): " + e;
+    } catch (const char* e) {
+        msg += " (const char*): " + std::string(e);
+    } catch (...) {
+#ifdef __GNUG__
+        auto type_info = abi::__cxa_current_exception_type();
+        if (type_info) {
+            int status = 0;
+            char* demangled = abi::__cxa_demangle(type_info->name(), 0, 0, &status);
+            if (status == 0) {
+                msg += " of type: " + std::string(demangled);
+                free(demangled);
+            } else {
+                msg += " of type: " + std::string(type_info->name());
+            }
+        }
+#endif
+    }
+    return msg;
+}
+
 bool ends_with(const std::string& str, const std::string& ending) {
     if (str.length() >= ending.length()) {
         return (str.compare(str.length() - ending.length(), ending.length(), ending) == 0);
