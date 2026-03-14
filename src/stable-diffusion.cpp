@@ -3015,7 +3015,7 @@ sd_ctx_t* new_sd_ctx(const sd_ctx_params_t* sd_ctx_params) {
         LOG_ERROR("exception: %s\n", e.what());
         return NULL;
     } catch (...) {
-        LOG_ERROR("unknown exception\n");
+        LOG_ERROR("%s\n", format_exception_details().c_str());
         return NULL;
     }
 }
@@ -3035,7 +3035,7 @@ void free_sd_ctx(sd_ctx_t* sd_ctx) {
     } catch (const std::exception& e) {
         LOG_ERROR("exception: %s\n", e.what());
     } catch (...) {
-        LOG_ERROR("unknown exception\n");
+        LOG_ERROR("%s\n", format_exception_details().c_str());
     }
 }
 
@@ -3055,7 +3055,7 @@ enum sample_method_t sd_get_default_sample_method(const sd_ctx_t* sd_ctx) {
         LOG_ERROR("exception: %s\n", e.what());
         return SAMPLE_METHOD_COUNT;
     } catch (...) {
-        LOG_ERROR("unknown exception\n");
+        LOG_ERROR("%s\n", format_exception_details().c_str());
         return SAMPLE_METHOD_COUNT;
     }
 }
@@ -3692,7 +3692,7 @@ sd_image_t* generate_image(sd_ctx_t* sd_ctx, const sd_img_gen_params_t* sd_img_g
         LOG_ERROR("exception: %s\n", e.what());
         return NULL;
     } catch (...) {
-        LOG_ERROR("unknown exception\n");
+        LOG_ERROR("%s\n", format_exception_details().c_str());
         return NULL;
     }
 }
@@ -4160,7 +4160,7 @@ SD_API sd_image_t* generate_video(sd_ctx_t* sd_ctx, const sd_vid_gen_params_t* s
         LOG_ERROR("exception: %s\n", e.what());
         return NULL;
     } catch (...) {
-        LOG_ERROR("unknown exception\n");
+        LOG_ERROR("%s\n", format_exception_details().c_str());
         return NULL;
     }
 }
