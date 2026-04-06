@@ -808,6 +808,39 @@ static std::tuple<float, float, float> get_ancestral_step_flow(float sigma_from,
     return {sigma_down, sigma_up, alpha_scale};
 }
 
+static sd::Tensor<float> sample_gradient_estimation(denoise_cb_t model,
+                                                    sd::Tensor<float> x,
+                                                    const std::vector<float>& sigmas,
+                                                    float ge_gamma) {
+    int steps = static_cast<int>(sigmas.size()) - 1;
+    sd::Tensor<float> old_d;
+    bool has_old_d = false;
+
+    for (int i = 0; i < steps; i++) {
+        float sigma       = sigmas[i];
+        auto denoised_opt = model(x, sigma, i + 1);
+        if (denoised_opt.empty()) {
+            return {};
+        }
+        sd::Tensor<float> denoised = std::move(denoised_opt);
+        sd::Tensor<float> d        = (x - denoised) / sigma;
+        float dt                   = sigmas[i + 1] - sigma;
+
+        if (sigmas[i + 1] == 0.0f) {
+            x = denoised;
+        } else {
+            x += d * dt;
+            if (has_old_d) {
+                sd::Tensor<float> d_bar = (d - old_d) * (ge_gamma - 1.0f);
+                x += d_bar * dt;
+            }
+        }
+        old_d     = d;
+        has_old_d = true;
+    }
+    return x;
+}
+
 static sd::Tensor<float> sample_euler_ancestral(denoise_cb_t model,
                                                 sd::Tensor<float> x,
                                                 const std::vector<float>& sigmas,
@@ -1635,6 +1668,7 @@ static sd::Tensor<float> sample_k_diffusion(sample_method_t method,
                                             std::vector<float> sigmas,
                                             std::shared_ptr<RNG> rng,
                                             float eta,
+                                            float ge_gamma,
                                             bool is_flow_denoiser) {
     switch (method) {
         case EULER_A_SAMPLE_METHOD:
@@ -1673,6 +1707,8 @@ static sd::Tensor<float> sample_k_diffusion(sample_method_t method,
             return sample_ddim_trailing(model, std::move(x), sigmas, rng, eta);
         case TCD_SAMPLE_METHOD:
             return sample_tcd(model, std::move(x), sigmas, rng, eta);
+        case GRADIENT_ESTIMATION:
+            return sample_gradient_estimation(model, std::move(x), sigmas, ge_gamma);
         default:
             return {};
     }

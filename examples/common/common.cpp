@@ -2128,6 +2128,7 @@ std::string get_image_params(const SDContextParams& ctx_params, const SDGenerati
     }
     parameter_string += "Guidance: " + std::to_string(gen_params.sample_params.guidance.distilled_guidance) + ", ";
     parameter_string += "Eta: " + std::to_string(gen_params.sample_params.eta) + ", ";
+    parameter_string += "Gradient Estimation Gamma: " + std::to_string(gen_params.sample_params.ge_gamma) + ", ";
     parameter_string += "Seed: " + std::to_string(seed) + ", ";
     parameter_string += "Size: " + std::to_string(gen_params.get_resolved_width()) + "x" + std::to_string(gen_params.get_resolved_height()) + ", ";
     parameter_string += "Model: " + sd_basename(ctx_params.model_path) + ", ";

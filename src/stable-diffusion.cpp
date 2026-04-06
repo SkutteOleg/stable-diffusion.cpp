@@ -72,6 +72,7 @@ const char* sampling_methods_str[] = {
     "Res Multistep",
     "Res 2s",
     "ER-SDE",
+    "Gradient Estimation",
 };
 
 /*================================================== Helper Functions ================================================*/
@@ -1612,6 +1613,7 @@ public:
                              float eta,
                              int shifted_timestep,
                              sample_method_t method,
+                             float ge_gamma,
                              bool is_flow_denoiser,
                              const std::vector<float>& sigmas,
                              int start_merge_step,
@@ -1811,7 +1813,7 @@ public:
             return denoised;
         };
 
-        auto x0_opt = sample_k_diffusion(method, denoise, x_t, sigmas, sampler_rng, eta, is_flow_denoiser);
+        auto x0_opt = sample_k_diffusion(method, denoise, x_t, sigmas, sampler_rng, eta, ge_gamma, is_flow_denoiser);
         if (x0_opt.empty()) {
             LOG_ERROR("Diffusion model sampling failed");
             if (control_net) {
@@ -1995,6 +1997,7 @@ const char* sample_method_to_str[] = {
     "res_multistep",
     "res_2s",
     "er_sde",
+    "gradient_estimation",
 };
 
 const char* sd_sample_method_name(enum sample_method_t sample_method) {
@@ -2255,6 +2258,7 @@ void sd_sample_params_init(sd_sample_params_t* sample_params) {
     sample_params->custom_sigmas               = nullptr;
     sample_params->custom_sigmas_count         = 0;
     sample_params->flow_shift                  = INFINITY;
+    sample_params->ge_gamma                    = 2.0f;
 }
 
 char* sd_sample_params_to_str(const sd_sample_params_t* sample_params) {
@@ -2275,6 +2279,7 @@ char* sd_sample_params_to_str(const sd_sample_params_t* sample_params) {
              "sample_method: %s, "
              "sample_steps: %d, "
              "eta: %.2f, "
+             "ge_gamma: %.2f, "
              "shifted_timestep: %d, "
              "flow_shift: %.2f)",
              sample_params->guidance.txt_cfg,
@@ -2290,6 +2295,7 @@ char* sd_sample_params_to_str(const sd_sample_params_t* sample_params) {
              sd_sample_method_name(sample_params->sample_method),
              sample_params->sample_steps,
              sample_params->eta,
+             sample_params->ge_gamma,
              sample_params->shifted_timestep,
              sample_params->flow_shift);
 
@@ -3211,6 +3217,7 @@ SD_API sd_image_t* generate_image(sd_ctx_t* sd_ctx, const sd_img_gen_params_t* s
                                                    plan.eta,
                                                    request.shifted_timestep,
                                                    plan.sample_method,
+                                                   sd_img_gen_params->sample_params.ge_gamma,
                                                    sd_ctx->sd->is_flow_denoiser(),
                                                    plan.sigmas,
                                                    plan.start_merge_step,
@@ -3571,6 +3578,7 @@ SD_API sd_image_t* generate_video(sd_ctx_t* sd_ctx, const sd_vid_gen_params_t* s
                                                            plan.high_noise_eta,
                                                            request.shifted_timestep,
                                                            plan.high_noise_sample_method,
+                                                           sd_vid_gen_params->high_noise_sample_params.ge_gamma,
                                                            sd_ctx->sd->is_flow_denoiser(),
                                                            high_noise_sigmas,
                                                            -1,
@@ -3613,6 +3621,7 @@ SD_API sd_image_t* generate_video(sd_ctx_t* sd_ctx, const sd_vid_gen_params_t* s
                                                         plan.eta,
                                                         sd_vid_gen_params->sample_params.shifted_timestep,
                                                         plan.sample_method,
+                                                        sd_vid_gen_params->sample_params.ge_gamma,
                                                         sd_ctx->sd->is_flow_denoiser(),
                                                         plan.sigmas,
                                                         -1,
