@@ -22,6 +22,31 @@
 #include "latent-preview.h"
 #include "name_conversion.h"
 
+#include <stdexcept>
+
+// Custom exception for stable-diffusion.cpp
+struct SDException : public std::runtime_error {
+    SDException(const std::string& message) : std::runtime_error(message) {}
+};
+
+// Custom abort callback
+static void sd_ggml_abort_callback(const char * message) {
+    throw SDException(message);
+}
+
+// RAII class to set and restore ggml_abort_callback
+class ScopedGGMLAbortCallback {
+public:
+    ScopedGGMLAbortCallback() {
+        previous_callback = ggml_set_abort_callback(sd_ggml_abort_callback);
+    }
+    ~ScopedGGMLAbortCallback() {
+        ggml_set_abort_callback(previous_callback);
+    }
+private:
+    ggml_abort_callback_t previous_callback;
+};
+
 const char* model_version_to_str[] = {
     "SD 1.x",
     "SD 1.x Inpaint",
@@ -2446,32 +2471,55 @@ static bool sd_version_supports_image_generation(SDVersion version) {
 }
 
 sd_ctx_t* new_sd_ctx(const sd_ctx_params_t* sd_ctx_params) {
-    sd_ctx_t* sd_ctx = (sd_ctx_t*)malloc(sizeof(sd_ctx_t));
-    if (sd_ctx == nullptr) {
-        return nullptr;
-    }
+    try {
+        ScopedGGMLAbortCallback abort_callback;
+        sd_ctx_t* sd_ctx = (sd_ctx_t*)malloc(sizeof(sd_ctx_t));
+        if (sd_ctx == nullptr) {
+            return nullptr;
+        }
 
-    sd_ctx->sd = new StableDiffusionGGML();
-    if (sd_ctx->sd == nullptr) {
-        free(sd_ctx);
-        return nullptr;
-    }
+        sd_ctx->sd = new StableDiffusionGGML();
+        if (sd_ctx->sd == nullptr) {
+            free(sd_ctx);
+            return nullptr;
+        }
 
-    if (!sd_ctx->sd->init(sd_ctx_params)) {
-        delete sd_ctx->sd;
-        sd_ctx->sd = nullptr;
-        free(sd_ctx);
-        return nullptr;
+        if (!sd_ctx->sd->init(sd_ctx_params)) {
+            delete sd_ctx->sd;
+            sd_ctx->sd = nullptr;
+            free(sd_ctx);
+            return nullptr;
+        }
+        return sd_ctx;
+    } catch (const SDException& e) {
+        LOG_ERROR("Stable Diffusion exception: %s\n", e.what());
+        return NULL;
+    } catch (const std::exception& e) {
+        LOG_ERROR("exception: %s\n", e.what());
+        return NULL;
+    } catch (...) {
+        LOG_ERROR("%s\n", format_exception_details().c_str());
+        return NULL;
     }
-    return sd_ctx;
 }
 
 void free_sd_ctx(sd_ctx_t* sd_ctx) {
-    if (sd_ctx->sd != nullptr) {
-        delete sd_ctx->sd;
-        sd_ctx->sd = nullptr;
+    try {
+        ScopedGGMLAbortCallback abort_callback;
+        if (sd_ctx) {
+            if (sd_ctx->sd != nullptr) {
+                delete sd_ctx->sd;
+                sd_ctx->sd = nullptr;
+            }
+            free(sd_ctx);
+        }
+    } catch (const SDException& e) {
+        LOG_ERROR("Stable Diffusion exception: %s\n", e.what());
+    } catch (const std::exception& e) {
+        LOG_ERROR("exception: %s\n", e.what());
+    } catch (...) {
+        LOG_ERROR("%s\n", format_exception_details().c_str());
     }
-    free(sd_ctx);
 }
 
 SD_API bool sd_ctx_supports_image_generation(const sd_ctx_t* sd_ctx) {
@@ -2489,12 +2537,24 @@ SD_API bool sd_ctx_supports_video_generation(const sd_ctx_t* sd_ctx) {
 }
 
 enum sample_method_t sd_get_default_sample_method(const sd_ctx_t* sd_ctx) {
-    if (sd_ctx != nullptr && sd_ctx->sd != nullptr) {
-        if (sd_version_is_dit(sd_ctx->sd->version)) {
-            return EULER_SAMPLE_METHOD;
+    try {
+        ScopedGGMLAbortCallback abort_callback;
+        if (sd_ctx != nullptr && sd_ctx->sd != nullptr) {
+            if (sd_version_is_dit(sd_ctx->sd->version)) {
+                return EULER_SAMPLE_METHOD;
+            }
         }
+        return EULER_A_SAMPLE_METHOD;
+    } catch (const SDException& e) {
+        LOG_ERROR("Stable Diffusion exception: %s\n", e.what());
+        return SAMPLE_METHOD_COUNT;
+    } catch (const std::exception& e) {
+        LOG_ERROR("exception: %s\n", e.what());
+        return SAMPLE_METHOD_COUNT;
+    } catch (...) {
+        LOG_ERROR("%s\n", format_exception_details().c_str());
+        return SAMPLE_METHOD_COUNT;
     }
-    return EULER_A_SAMPLE_METHOD;
 }
 
 enum scheduler_t sd_get_default_scheduler(const sd_ctx_t* sd_ctx, enum sample_method_t sample_method) {
@@ -3197,111 +3257,123 @@ static sd_image_t* decode_image_outputs(sd_ctx_t* sd_ctx,
 }
 
 SD_API sd_image_t* generate_image(sd_ctx_t* sd_ctx, const sd_img_gen_params_t* sd_img_gen_params) {
-    if (sd_ctx == nullptr || sd_img_gen_params == nullptr) {
-        return nullptr;
-    }
-
-    int64_t t0                    = ggml_time_ms();
-    sd_ctx->sd->vae_tiling_params = sd_img_gen_params->vae_tiling_params;
-    GenerationRequest request(sd_ctx, sd_img_gen_params);
-    LOG_INFO("generate_image %dx%d", request.width, request.height);
-
-    sd_ctx->sd->rng->manual_seed(request.seed);
-    sd_ctx->sd->sampler_rng->manual_seed(request.seed);
-    sd_ctx->sd->set_flow_shift(sd_img_gen_params->sample_params.flow_shift);
-    sd_ctx->sd->apply_loras(sd_img_gen_params->loras, sd_img_gen_params->lora_count);
-
-    ImageVaeAxesGuard axes_guard(sd_ctx, sd_img_gen_params, request);
-
-    SamplePlan plan(sd_ctx, sd_img_gen_params, request);
-    auto latents_opt = prepare_image_generation_latents(sd_ctx,
-                                                        sd_img_gen_params,
-                                                        &request,
-                                                        &plan);
-    if (!latents_opt.has_value()) {
-        return nullptr;
-    }
-    ImageGenerationLatents latents = std::move(*latents_opt);
-
-    auto embeds_opt = prepare_image_generation_embeds(sd_ctx,
-                                                      sd_img_gen_params,
-                                                      &request,
-                                                      &plan,
-                                                      &latents);
-    if (!embeds_opt.has_value()) {
-        return nullptr;
-    }
-    ImageGenerationEmbeds embeds = std::move(*embeds_opt);
-
-    std::vector<sd::Tensor<float>> final_latents;
-    int64_t denoise_start = ggml_time_ms();
-    for (int b = 0; b < request.batch_count; b++) {
-        int64_t sampling_start = ggml_time_ms();
-        int64_t cur_seed       = request.seed + b;
-        LOG_INFO("generating image: %i/%i - seed %" PRId64, b + 1, request.batch_count, cur_seed);
-
-        sd_ctx->sd->rng->manual_seed(cur_seed);
-        sd_ctx->sd->sampler_rng->manual_seed(cur_seed);
-        sd::Tensor<float> noise = sd::randn_like<float>(latents.init_latent, sd_ctx->sd->rng);
-
-        sd::Tensor<float> x_0 = sd_ctx->sd->sample(sd_ctx->sd->diffusion_model,
-                                                   true,
-                                                   latents.init_latent,
-                                                   std::move(noise),
-                                                   embeds.cond,
-                                                   embeds.uncond,
-                                                   embeds.img_cond,
-                                                   embeds.id_cond,
-                                                   latents.control_image,
-                                                   request.control_strength,
-                                                   request.guidance,
-                                                   plan.eta,
-                                                   request.shifted_timestep,
-                                                   plan.sample_method,
-                                                   sd_img_gen_params->sample_params.ge_gamma,
-                                                   sd_ctx->sd->is_flow_denoiser(),
-                                                   plan.sigmas,
-                                                   plan.start_merge_step,
-                                                   latents.ref_latents,
-                                                   request.increase_ref_index,
-                                                   latents.denoise_mask,
-                                                   sd::Tensor<float>(),
-                                                   1.f,
-                                                   request.cache_params);
-        int64_t sampling_end  = ggml_time_ms();
-        if (!x_0.empty()) {
-            LOG_INFO("sampling completed, taking %.2fs", (sampling_end - sampling_start) * 1.0f / 1000);
-            final_latents.push_back(std::move(x_0));
-            continue;
+    try {
+        ScopedGGMLAbortCallback abort_callback;
+        if (sd_ctx == nullptr || sd_img_gen_params == nullptr) {
+            return nullptr;
         }
 
-        LOG_ERROR("sampling for image %d/%d failed after %.2fs",
-                  b + 1,
-                  request.batch_count,
-                  (sampling_end - sampling_start) * 1.0f / 1000);
+        int64_t t0                    = ggml_time_ms();
+        sd_ctx->sd->vae_tiling_params = sd_img_gen_params->vae_tiling_params;
+        GenerationRequest request(sd_ctx, sd_img_gen_params);
+        LOG_INFO("generate_image %dx%d", request.width, request.height);
+
+        sd_ctx->sd->rng->manual_seed(request.seed);
+        sd_ctx->sd->sampler_rng->manual_seed(request.seed);
+        sd_ctx->sd->set_flow_shift(sd_img_gen_params->sample_params.flow_shift);
+        sd_ctx->sd->apply_loras(sd_img_gen_params->loras, sd_img_gen_params->lora_count);
+
+        ImageVaeAxesGuard axes_guard(sd_ctx, sd_img_gen_params, request);
+
+        SamplePlan plan(sd_ctx, sd_img_gen_params, request);
+        auto latents_opt = prepare_image_generation_latents(sd_ctx,
+                                                            sd_img_gen_params,
+                                                            &request,
+                                                            &plan);
+        if (!latents_opt.has_value()) {
+            return nullptr;
+        }
+        ImageGenerationLatents latents = std::move(*latents_opt);
+
+        auto embeds_opt = prepare_image_generation_embeds(sd_ctx,
+                                                          sd_img_gen_params,
+                                                          &request,
+                                                          &plan,
+                                                          &latents);
+        if (!embeds_opt.has_value()) {
+            return nullptr;
+        }
+        ImageGenerationEmbeds embeds = std::move(*embeds_opt);
+
+        std::vector<sd::Tensor<float>> final_latents;
+        int64_t denoise_start = ggml_time_ms();
+        for (int b = 0; b < request.batch_count; b++) {
+            int64_t sampling_start = ggml_time_ms();
+            int64_t cur_seed       = request.seed + b;
+            LOG_INFO("generating image: %i/%i - seed %" PRId64, b + 1, request.batch_count, cur_seed);
+
+            sd_ctx->sd->rng->manual_seed(cur_seed);
+            sd_ctx->sd->sampler_rng->manual_seed(cur_seed);
+            sd::Tensor<float> noise = sd::randn_like<float>(latents.init_latent, sd_ctx->sd->rng);
+
+            sd::Tensor<float> x_0 = sd_ctx->sd->sample(sd_ctx->sd->diffusion_model,
+                                                       true,
+                                                       latents.init_latent,
+                                                       std::move(noise),
+                                                       embeds.cond,
+                                                       embeds.uncond,
+                                                       embeds.img_cond,
+                                                       embeds.id_cond,
+                                                       latents.control_image,
+                                                       request.control_strength,
+                                                       request.guidance,
+                                                       plan.eta,
+                                                       request.shifted_timestep,
+                                                       plan.sample_method,
+                                                       sd_img_gen_params->sample_params.ge_gamma,
+                                                       sd_ctx->sd->is_flow_denoiser(),
+                                                       plan.sigmas,
+                                                       plan.start_merge_step,
+                                                       latents.ref_latents,
+                                                       request.increase_ref_index,
+                                                       latents.denoise_mask,
+                                                       sd::Tensor<float>(),
+                                                       1.f,
+                                                       request.cache_params);
+            int64_t sampling_end  = ggml_time_ms();
+            if (!x_0.empty()) {
+                LOG_INFO("sampling completed, taking %.2fs", (sampling_end - sampling_start) * 1.0f / 1000);
+                final_latents.push_back(std::move(x_0));
+                continue;
+            }
+
+            LOG_ERROR("sampling for image %d/%d failed after %.2fs",
+                      b + 1,
+                      request.batch_count,
+                      (sampling_end - sampling_start) * 1.0f / 1000);
+            if (sd_ctx->sd->free_params_immediately) {
+                sd_ctx->sd->diffusion_model->free_params_buffer();
+            }
+            return nullptr;
+        }
         if (sd_ctx->sd->free_params_immediately) {
             sd_ctx->sd->diffusion_model->free_params_buffer();
         }
-        return nullptr;
-    }
-    if (sd_ctx->sd->free_params_immediately) {
-        sd_ctx->sd->diffusion_model->free_params_buffer();
-    }
-    int64_t denoise_end = ggml_time_ms();
-    LOG_INFO("generating %" PRId64 " latent images completed, taking %.2fs",
-             final_latents.size(),
-             (denoise_end - denoise_start) * 1.0f / 1000);
+        int64_t denoise_end = ggml_time_ms();
+        LOG_INFO("generating %" PRId64 " latent images completed, taking %.2fs",
+                 final_latents.size(),
+                 (denoise_end - denoise_start) * 1.0f / 1000);
 
-    auto result = decode_image_outputs(sd_ctx, request, final_latents);
-    if (result == nullptr) {
-        return nullptr;
+        auto result = decode_image_outputs(sd_ctx, request, final_latents);
+        if (result == nullptr) {
+            return nullptr;
+        }
+
+        sd_ctx->sd->lora_stat();
+
+        int64_t t1 = ggml_time_ms();
+        LOG_INFO("generate_image completed in %.2fs", (t1 - t0) * 1.0f / 1000);
+        return result;
+    } catch (const SDException& e) {
+        LOG_ERROR("Stable Diffusion exception: %s\n", e.what());
+        return NULL;
+    } catch (const std::exception& e) {
+        LOG_ERROR("exception: %s\n", e.what());
+        return NULL;
+    } catch (...) {
+        LOG_ERROR("%s\n", format_exception_details().c_str());
+        return NULL;
     }
-
-    sd_ctx->sd->lora_stat();
-
-    int64_t t1 = ggml_time_ms();
-    LOG_INFO("generate_image completed in %.2fs", (t1 - t0) * 1.0f / 1000);
-    return result;
 }
 
 static std::optional<ImageGenerationLatents> prepare_video_generation_latents(sd_ctx_t* sd_ctx,
@@ -3561,143 +3633,155 @@ static sd_image_t* decode_video_outputs(sd_ctx_t* sd_ctx,
 }
 
 SD_API sd_image_t* generate_video(sd_ctx_t* sd_ctx, const sd_vid_gen_params_t* sd_vid_gen_params, int* num_frames_out) {
-    if (sd_ctx == nullptr || sd_vid_gen_params == nullptr) {
-        return nullptr;
-    }
-    if (num_frames_out != nullptr) {
-        *num_frames_out = 0;
-    }
-    int64_t t0                    = ggml_time_ms();
-    sd_ctx->sd->vae_tiling_params = sd_vid_gen_params->vae_tiling_params;
-    GenerationRequest request(sd_ctx, sd_vid_gen_params);
-    sd_ctx->sd->rng->manual_seed(request.seed);
-    sd_ctx->sd->sampler_rng->manual_seed(request.seed);
-    sd_ctx->sd->set_flow_shift(sd_vid_gen_params->sample_params.flow_shift);
-    sd_ctx->sd->apply_loras(sd_vid_gen_params->loras, sd_vid_gen_params->lora_count);
+    try {
+        ScopedGGMLAbortCallback abort_callback;
+        if (sd_ctx == nullptr || sd_vid_gen_params == nullptr) {
+            return nullptr;
+        }
+        if (num_frames_out != nullptr) {
+            *num_frames_out = 0;
+        }
+        int64_t t0                    = ggml_time_ms();
+        sd_ctx->sd->vae_tiling_params = sd_vid_gen_params->vae_tiling_params;
+        GenerationRequest request(sd_ctx, sd_vid_gen_params);
+        sd_ctx->sd->rng->manual_seed(request.seed);
+        sd_ctx->sd->sampler_rng->manual_seed(request.seed);
+        sd_ctx->sd->set_flow_shift(sd_vid_gen_params->sample_params.flow_shift);
+        sd_ctx->sd->apply_loras(sd_vid_gen_params->loras, sd_vid_gen_params->lora_count);
 
-    SamplePlan plan(sd_ctx, sd_vid_gen_params, request);
-    auto latent_inputs_opt = prepare_video_generation_latents(sd_ctx, sd_vid_gen_params, &request);
-    if (!latent_inputs_opt.has_value()) {
-        return nullptr;
-    }
-    ImageGenerationLatents latents = std::move(*latent_inputs_opt);
-    ImageGenerationEmbeds embeds   = prepare_video_generation_embeds(sd_ctx,
-                                                                     sd_vid_gen_params,
-                                                                     request,
-                                                                     latents);
-    LOG_INFO("generate_video %dx%dx%d",
-             request.width,
-             request.height,
-             request.frames);
+        SamplePlan plan(sd_ctx, sd_vid_gen_params, request);
+        auto latent_inputs_opt = prepare_video_generation_latents(sd_ctx, sd_vid_gen_params, &request);
+        if (!latent_inputs_opt.has_value()) {
+            return nullptr;
+        }
+        ImageGenerationLatents latents = std::move(*latent_inputs_opt);
+        ImageGenerationEmbeds embeds   = prepare_video_generation_embeds(sd_ctx,
+                                                                         sd_vid_gen_params,
+                                                                         request,
+                                                                         latents);
+        LOG_INFO("generate_video %dx%dx%d",
+                 request.width,
+                 request.height,
+                 request.frames);
 
-    int64_t latent_start = ggml_time_ms();
-    int W                = request.width / request.vae_scale_factor;
-    int H                = request.height / request.vae_scale_factor;
-    int T                = static_cast<int>(latents.init_latent.shape()[2]);
+        int64_t latent_start = ggml_time_ms();
+        int W                = request.width / request.vae_scale_factor;
+        int H                = request.height / request.vae_scale_factor;
+        int T                = static_cast<int>(latents.init_latent.shape()[2]);
 
-    sd::Tensor<float> x_t   = latents.init_latent;
-    sd::Tensor<float> noise = sd::Tensor<float>::randn_like(x_t, sd_ctx->sd->rng);
+        sd::Tensor<float> x_t   = latents.init_latent;
+        sd::Tensor<float> noise = sd::Tensor<float>::randn_like(x_t, sd_ctx->sd->rng);
 
-    if (plan.high_noise_sample_steps > 0) {
-        LOG_DEBUG("sample(high noise) %dx%dx%d", W, H, T);
+        if (plan.high_noise_sample_steps > 0) {
+            LOG_DEBUG("sample(high noise) %dx%dx%d", W, H, T);
 
-        int64_t sampling_start = ggml_time_ms();
-        std::vector<float> high_noise_sigmas(plan.sigmas.begin(), plan.sigmas.begin() + plan.high_noise_sample_steps + 1);
-        plan.sigmas = std::vector<float>(plan.sigmas.begin() + plan.high_noise_sample_steps, plan.sigmas.end());
+            int64_t sampling_start = ggml_time_ms();
+            std::vector<float> high_noise_sigmas(plan.sigmas.begin(), plan.sigmas.begin() + plan.high_noise_sample_steps + 1);
+            plan.sigmas = std::vector<float>(plan.sigmas.begin() + plan.high_noise_sample_steps, plan.sigmas.end());
 
-        sd::Tensor<float> x_t_sampled = sd_ctx->sd->sample(sd_ctx->sd->high_noise_diffusion_model,
-                                                           false,
-                                                           x_t,
-                                                           std::move(noise),
-                                                           embeds.cond,
-                                                           request.use_high_noise_uncond ? embeds.uncond : SDCondition(),
-                                                           embeds.img_cond,
-                                                           embeds.id_cond,
-                                                           sd::Tensor<float>(),
-                                                           0.f,
-                                                           request.high_noise_guidance,
-                                                           plan.high_noise_eta,
-                                                           request.shifted_timestep,
-                                                           plan.high_noise_sample_method,
-                                                           sd_vid_gen_params->high_noise_sample_params.ge_gamma,
-                                                           sd_ctx->sd->is_flow_denoiser(),
-                                                           high_noise_sigmas,
-                                                           -1,
-                                                           std::vector<sd::Tensor<float>>{},
-                                                           false,
-                                                           latents.denoise_mask,
-                                                           latents.vace_context,
-                                                           request.vace_strength,
-                                                           request.cache_params);
-        int64_t sampling_end          = ggml_time_ms();
-        if (x_t_sampled.empty()) {
-            LOG_ERROR("sampling(high noise) failed after %.2fs", (sampling_end - sampling_start) * 1.0f / 1000);
+            sd::Tensor<float> x_t_sampled = sd_ctx->sd->sample(sd_ctx->sd->high_noise_diffusion_model,
+                                                               false,
+                                                               x_t,
+                                                               std::move(noise),
+                                                               embeds.cond,
+                                                               request.use_high_noise_uncond ? embeds.uncond : SDCondition(),
+                                                               embeds.img_cond,
+                                                               embeds.id_cond,
+                                                               sd::Tensor<float>(),
+                                                               0.f,
+                                                               request.high_noise_guidance,
+                                                               plan.high_noise_eta,
+                                                               request.shifted_timestep,
+                                                               plan.high_noise_sample_method,
+                                                               sd_vid_gen_params->high_noise_sample_params.ge_gamma,
+                                                               sd_ctx->sd->is_flow_denoiser(),
+                                                               high_noise_sigmas,
+                                                               -1,
+                                                               std::vector<sd::Tensor<float>>{},
+                                                               false,
+                                                               latents.denoise_mask,
+                                                               latents.vace_context,
+                                                               request.vace_strength,
+                                                               request.cache_params);
+            int64_t sampling_end          = ggml_time_ms();
+            if (x_t_sampled.empty()) {
+                LOG_ERROR("sampling(high noise) failed after %.2fs", (sampling_end - sampling_start) * 1.0f / 1000);
+                if (sd_ctx->sd->free_params_immediately) {
+                    sd_ctx->sd->high_noise_diffusion_model->free_params_buffer();
+                }
+                return nullptr;
+            }
+
+            x_t   = std::move(x_t_sampled);
+            noise = {};
+            LOG_INFO("sampling(high noise) completed, taking %.2fs", (sampling_end - sampling_start) * 1.0f / 1000);
             if (sd_ctx->sd->free_params_immediately) {
                 sd_ctx->sd->high_noise_diffusion_model->free_params_buffer();
             }
+        }
+
+        LOG_DEBUG("sample %dx%dx%d", W, H, T);
+        int64_t sampling_start         = ggml_time_ms();
+        sd::Tensor<float> final_latent = sd_ctx->sd->sample(sd_ctx->sd->diffusion_model,
+                                                            true,
+                                                            x_t,
+                                                            std::move(noise),
+                                                            embeds.cond,
+                                                            request.use_uncond ? embeds.uncond : SDCondition(),
+                                                            embeds.img_cond,
+                                                            embeds.id_cond,
+                                                            sd::Tensor<float>(),
+                                                            0.f,
+                                                            sd_vid_gen_params->sample_params.guidance,
+                                                            plan.eta,
+                                                            sd_vid_gen_params->sample_params.shifted_timestep,
+                                                            plan.sample_method,
+                                                            sd_vid_gen_params->sample_params.ge_gamma,
+                                                            sd_ctx->sd->is_flow_denoiser(),
+                                                            plan.sigmas,
+                                                            -1,
+                                                            std::vector<sd::Tensor<float>>{},
+                                                            false,
+                                                            latents.denoise_mask,
+                                                            latents.vace_context,
+                                                            request.vace_strength,
+                                                            request.cache_params);
+
+        int64_t sampling_end = ggml_time_ms();
+        if (sd_ctx->sd->free_params_immediately) {
+            sd_ctx->sd->diffusion_model->free_params_buffer();
+        }
+        if (final_latent.empty()) {
+            LOG_ERROR("sampling failed after %.2fs", (sampling_end - sampling_start) * 1.0f / 1000);
+            return nullptr;
+        }
+        LOG_INFO("sampling completed, taking %.2fs", (sampling_end - sampling_start) * 1.0f / 1000);
+
+        if (latents.ref_image_num > 0) {
+            final_latent = sd::ops::slice(final_latent, 2, latents.ref_image_num, final_latent.shape()[2]);
+        }
+
+        int64_t latent_end = ggml_time_ms();
+        LOG_INFO("generating latent video completed, taking %.2fs", (latent_end - latent_start) * 1.0f / 1000);
+
+        auto result = decode_video_outputs(sd_ctx, final_latent, num_frames_out);
+        if (result == nullptr) {
             return nullptr;
         }
 
-        x_t   = std::move(x_t_sampled);
-        noise = {};
-        LOG_INFO("sampling(high noise) completed, taking %.2fs", (sampling_end - sampling_start) * 1.0f / 1000);
-        if (sd_ctx->sd->free_params_immediately) {
-            sd_ctx->sd->high_noise_diffusion_model->free_params_buffer();
-        }
+        sd_ctx->sd->lora_stat();
+
+        int64_t t1 = ggml_time_ms();
+        LOG_INFO("generate_video completed in %.2fs", (t1 - t0) * 1.0f / 1000);
+        return result;
+    } catch (const SDException& e) {
+        LOG_ERROR("Stable Diffusion exception: %s\n", e.what());
+        return NULL;
+    } catch (const std::exception& e) {
+        LOG_ERROR("exception: %s\n", e.what());
+        return NULL;
+    } catch (...) {
+        LOG_ERROR("%s\n", format_exception_details().c_str());
+        return NULL;
     }
-
-    LOG_DEBUG("sample %dx%dx%d", W, H, T);
-    int64_t sampling_start         = ggml_time_ms();
-    sd::Tensor<float> final_latent = sd_ctx->sd->sample(sd_ctx->sd->diffusion_model,
-                                                        true,
-                                                        x_t,
-                                                        std::move(noise),
-                                                        embeds.cond,
-                                                        request.use_uncond ? embeds.uncond : SDCondition(),
-                                                        embeds.img_cond,
-                                                        embeds.id_cond,
-                                                        sd::Tensor<float>(),
-                                                        0.f,
-                                                        sd_vid_gen_params->sample_params.guidance,
-                                                        plan.eta,
-                                                        sd_vid_gen_params->sample_params.shifted_timestep,
-                                                        plan.sample_method,
-                                                        sd_vid_gen_params->sample_params.ge_gamma,
-                                                        sd_ctx->sd->is_flow_denoiser(),
-                                                        plan.sigmas,
-                                                        -1,
-                                                        std::vector<sd::Tensor<float>>{},
-                                                        false,
-                                                        latents.denoise_mask,
-                                                        latents.vace_context,
-                                                        request.vace_strength,
-                                                        request.cache_params);
-
-    int64_t sampling_end = ggml_time_ms();
-    if (sd_ctx->sd->free_params_immediately) {
-        sd_ctx->sd->diffusion_model->free_params_buffer();
-    }
-    if (final_latent.empty()) {
-        LOG_ERROR("sampling failed after %.2fs", (sampling_end - sampling_start) * 1.0f / 1000);
-        return nullptr;
-    }
-    LOG_INFO("sampling completed, taking %.2fs", (sampling_end - sampling_start) * 1.0f / 1000);
-
-    if (latents.ref_image_num > 0) {
-        final_latent = sd::ops::slice(final_latent, 2, latents.ref_image_num, final_latent.shape()[2]);
-    }
-
-    int64_t latent_end = ggml_time_ms();
-    LOG_INFO("generating latent video completed, taking %.2fs", (latent_end - latent_start) * 1.0f / 1000);
-
-    auto result = decode_video_outputs(sd_ctx, final_latent, num_frames_out);
-    if (result == nullptr) {
-        return nullptr;
-    }
-
-    sd_ctx->sd->lora_stat();
-
-    int64_t t1 = ggml_time_ms();
-    LOG_INFO("generate_video completed in %.2fs", (t1 - t0) * 1.0f / 1000);
-    return result;
 }
