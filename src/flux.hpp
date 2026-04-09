@@ -1367,16 +1367,28 @@ namespace Flux {
             ggml_tensor* timesteps = make_input(timesteps_tensor);
             ggml_tensor* context   = make_optional_input(context_tensor);
             ggml_tensor* c_concat  = make_optional_input(c_concat_tensor);
-            ggml_tensor* y         = make_optional_input(y_tensor);
+
+            ggml_tensor* y = nullptr;
+            if (!(flux_params.is_chroma && !use_mask)) {
+                y = make_optional_input(y_tensor);
+            }
+
             if (flux_params.guidance_embed || flux_params.is_chroma) {
                 if (!guidance_tensor.empty()) {
                     this->guidance_tensor = guidance_tensor;
-                    if (flux_params.is_chroma) {
-                        this->guidance_tensor.fill_(0.f);
-                    }
+                }
+                if (flux_params.is_chroma && this->guidance_tensor.empty()) {
+                    this->guidance_tensor = sd::Tensor<float>({1}, {0.0f});
+                }
+                if (flux_params.is_chroma && !this->guidance_tensor.empty()) {
+                    this->guidance_tensor.fill_(0.f);
                 }
             }
-            ggml_tensor* guidance = make_optional_input(this->guidance_tensor);
+            ggml_tensor* guidance = nullptr;
+            if (flux_params.guidance_embed || flux_params.is_chroma) {
+                guidance = make_optional_input(this->guidance_tensor);
+            }
+
             std::vector<ggml_tensor*> ref_latents;
             ref_latents.reserve(ref_latents_tensor.size());
             for (const auto& ref_latent_tensor : ref_latents_tensor) {
@@ -1390,10 +1402,6 @@ namespace Flux {
             ggml_tensor* dct              = nullptr;  // for chroma radiance
 
             if (flux_params.is_chroma) {
-                if (!use_mask) {
-                    y = nullptr;
-                }
-
                 // ggml_arange is not working on some backends, precompute it
                 mod_index_arange_vec = arange(0, 344);
                 mod_index_arange     = ggml_new_tensor_1d(compute_ctx, GGML_TYPE_F32, mod_index_arange_vec.size());
