@@ -5,11 +5,37 @@
 #include <cmath>
 #include <cstdlib>
 
+#include <stdexcept>
+
 #include "core/ggml_extend.h"
 #include "core/util.h"
 #include "pipeline/diffusion_engine.h"
 #include "pipeline/generation.h"
 #include "pipeline/request.h"
+
+// Custom exception for stable-diffusion.cpp
+struct SDException : public std::runtime_error {
+    SDException(const std::string& message) : std::runtime_error(message) {}
+};
+
+// Custom abort callback
+static void sd_ggml_abort_callback(const char* message) {
+    throw SDException(message);
+}
+
+// RAII class to set and restore ggml_abort_callback
+class ScopedGGMLAbortCallback {
+public:
+    ScopedGGMLAbortCallback() {
+        previous_callback = ggml_set_abort_callback(sd_ggml_abort_callback);
+    }
+    ~ScopedGGMLAbortCallback() {
+        ggml_set_abort_callback(previous_callback);
+    }
+
+private:
+    ggml_abort_callback_t previous_callback;
+};
 
 #define NONE_STR "NONE"
 
@@ -641,32 +667,55 @@ struct sd_ctx_t {
 };
 
 sd_ctx_t* new_sd_ctx(const sd_ctx_params_t* sd_ctx_params) {
-    sd_ctx_t* sd_ctx = (sd_ctx_t*)malloc(sizeof(sd_ctx_t));
-    if (sd_ctx == nullptr) {
-        return nullptr;
-    }
+    try {
+        ScopedGGMLAbortCallback abort_callback;
+        sd_ctx_t* sd_ctx = (sd_ctx_t*)malloc(sizeof(sd_ctx_t));
+        if (sd_ctx == nullptr) {
+            return nullptr;
+        }
 
-    sd_ctx->sd = new StableDiffusionGGML();
-    if (sd_ctx->sd == nullptr) {
-        free(sd_ctx);
-        return nullptr;
-    }
+        sd_ctx->sd = new StableDiffusionGGML();
+        if (sd_ctx->sd == nullptr) {
+            free(sd_ctx);
+            return nullptr;
+        }
 
-    if (!sd_ctx->sd->init(sd_ctx_params)) {
-        delete sd_ctx->sd;
-        sd_ctx->sd = nullptr;
-        free(sd_ctx);
-        return nullptr;
+        if (!sd_ctx->sd->init(sd_ctx_params)) {
+            delete sd_ctx->sd;
+            sd_ctx->sd = nullptr;
+            free(sd_ctx);
+            return nullptr;
+        }
+        return sd_ctx;
+    } catch (const SDException& e) {
+        LOG_ERROR("Stable Diffusion exception: %s\n", e.what());
+        return NULL;
+    } catch (const std::exception& e) {
+        LOG_ERROR("exception: %s\n", e.what());
+        return NULL;
+    } catch (...) {
+        LOG_ERROR("%s\n", format_exception_details().c_str());
+        return NULL;
     }
-    return sd_ctx;
 }
 
 void free_sd_ctx(sd_ctx_t* sd_ctx) {
-    if (sd_ctx->sd != nullptr) {
-        delete sd_ctx->sd;
-        sd_ctx->sd = nullptr;
+    try {
+        ScopedGGMLAbortCallback abort_callback;
+        if (sd_ctx) {
+            if (sd_ctx->sd != nullptr) {
+                delete sd_ctx->sd;
+                sd_ctx->sd = nullptr;
+            }
+            free(sd_ctx);
+        }
+    } catch (const SDException& e) {
+        LOG_ERROR("Stable Diffusion exception: %s\n", e.what());
+    } catch (const std::exception& e) {
+        LOG_ERROR("exception: %s\n", e.what());
+    } catch (...) {
+        LOG_ERROR("%s\n", format_exception_details().c_str());
     }
-    free(sd_ctx);
 }
 
 SD_API void sd_cancel_generation(sd_ctx_t* sd_ctx, enum sd_cancel_mode_t mode) {
@@ -733,7 +782,19 @@ const char* sd_get_model_version_name(const sd_ctx_t* sd_ctx) {
 }
 
 enum sample_method_t sd_get_default_sample_method(const sd_ctx_t* sd_ctx) {
-    return sd::pipeline::default_sample_method(sd_ctx != nullptr ? sd_ctx->sd : nullptr);
+    try {
+        ScopedGGMLAbortCallback abort_callback;
+        return sd::pipeline::default_sample_method(sd_ctx != nullptr ? sd_ctx->sd : nullptr);
+    } catch (const SDException& e) {
+        LOG_ERROR("Stable Diffusion exception: %s\n", e.what());
+        return SAMPLE_METHOD_COUNT;
+    } catch (const std::exception& e) {
+        LOG_ERROR("exception: %s\n", e.what());
+        return SAMPLE_METHOD_COUNT;
+    } catch (...) {
+        LOG_ERROR("%s\n", format_exception_details().c_str());
+        return SAMPLE_METHOD_COUNT;
+    }
 }
 
 enum scheduler_t sd_get_default_scheduler(const sd_ctx_t* sd_ctx, enum sample_method_t sample_method) {
@@ -744,15 +805,27 @@ SD_API bool generate_image(sd_ctx_t* sd_ctx,
                            const sd_img_gen_params_t* params,
                            sd_image_t** images_out,
                            int* num_images_out) {
-    if (images_out != nullptr)
-        *images_out = nullptr;
-    if (num_images_out != nullptr)
-        *num_images_out = 0;
-    if (sd_ctx == nullptr || sd_ctx->sd == nullptr || params == nullptr) {
+    try {
+        ScopedGGMLAbortCallback abort_callback;
+        if (images_out != nullptr)
+            *images_out = nullptr;
+        if (num_images_out != nullptr)
+            *num_images_out = 0;
+        if (sd_ctx == nullptr || sd_ctx->sd == nullptr || params == nullptr) {
+            return false;
+        }
+        StableDiffusionGGML::ExecutionScope execution(*sd_ctx->sd);
+        return execution.ready && sd::pipeline::generate_image(sd_ctx->sd, params, images_out, num_images_out);
+    } catch (const SDException& e) {
+        LOG_ERROR("Stable Diffusion exception: %s\n", e.what());
+        return false;
+    } catch (const std::exception& e) {
+        LOG_ERROR("exception: %s\n", e.what());
+        return false;
+    } catch (...) {
+        LOG_ERROR("%s\n", format_exception_details().c_str());
         return false;
     }
-    StableDiffusionGGML::ExecutionScope execution(*sd_ctx->sd);
-    return execution.ready && sd::pipeline::generate_image(sd_ctx->sd, params, images_out, num_images_out);
 }
 
 SD_API bool generate_video(sd_ctx_t* sd_ctx,
@@ -761,24 +834,36 @@ SD_API bool generate_video(sd_ctx_t* sd_ctx,
                            int* num_frames_out,
                            sd_audio_t** audio_out,
                            int* fps_out) {
-    if (frames_out != nullptr)
-        *frames_out = nullptr;
-    if (audio_out != nullptr)
-        *audio_out = nullptr;
-    if (num_frames_out != nullptr)
-        *num_frames_out = 0;
-    if (fps_out != nullptr)
-        *fps_out = 0;
-    if (sd_ctx == nullptr || sd_ctx->sd == nullptr || sd_vid_gen_params == nullptr) {
+    try {
+        ScopedGGMLAbortCallback abort_callback;
+        if (frames_out != nullptr)
+            *frames_out = nullptr;
+        if (audio_out != nullptr)
+            *audio_out = nullptr;
+        if (num_frames_out != nullptr)
+            *num_frames_out = 0;
+        if (fps_out != nullptr)
+            *fps_out = 0;
+        if (sd_ctx == nullptr || sd_ctx->sd == nullptr || sd_vid_gen_params == nullptr) {
+            return false;
+        }
+
+        StableDiffusionGGML::ExecutionScope execution(*sd_ctx->sd);
+        if (!execution.ready) {
+            return false;
+        }
+
+        return sd::pipeline::generate_video(sd_ctx->sd, sd_vid_gen_params, frames_out, num_frames_out, audio_out, fps_out);
+    } catch (const SDException& e) {
+        LOG_ERROR("Stable Diffusion exception: %s\n", e.what());
+        return false;
+    } catch (const std::exception& e) {
+        LOG_ERROR("exception: %s\n", e.what());
+        return false;
+    } catch (...) {
+        LOG_ERROR("%s\n", format_exception_details().c_str());
         return false;
     }
-
-    StableDiffusionGGML::ExecutionScope execution(*sd_ctx->sd);
-    if (!execution.ready) {
-        return false;
-    }
-
-    return sd::pipeline::generate_video(sd_ctx->sd, sd_vid_gen_params, frames_out, num_frames_out, audio_out, fps_out);
 }
 
 SD_API void free_sd_images(sd_image_t* result_images, int num_images) {

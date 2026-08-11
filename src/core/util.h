@@ -28,6 +28,8 @@ bool contains(const std::string& str, const std::string& substr);
 
 std::string sd_format(const char* fmt, ...);
 
+std::string format_exception_details();
+
 void replace_all_chars(std::string& str, char target, char replacement);
 std::string escape_newlines(const std::string& text);
 
